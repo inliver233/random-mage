@@ -60,6 +60,8 @@ packaging==26.0
     # via pytest
 pluggy==1.6.0
     # via pytest
+prometheus-client==0.24.1
+    # via -r requirements.in
 pycparser==3.0
     # via cffi
 pydantic==2.12.5

@@ -6,3 +6,4 @@ alembic==1.18.3
 httpx==0.28.1
 cryptography==42.0.5
 python-multipart==0.0.22
+prometheus-client==0.24.1
