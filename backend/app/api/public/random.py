@@ -22,6 +22,10 @@ async def random_image(
     redirect: int = 0,
     r18: int = 0,
     r18_strict: int = 1,
+    orientation: str = "any",
+    min_width: int = 0,
+    min_height: int = 0,
+    min_pixels: int = 0,
 ) -> Any:
     if format not in {"image", "json"}:
         raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported format", status_code=400)
@@ -31,6 +35,12 @@ async def random_image(
         raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported r18", status_code=400)
     if r18_strict not in {0, 1}:
         raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported r18_strict", status_code=400)
+    orientation = (orientation or "").strip().lower()
+    orientation_map = {"any": None, "portrait": 1, "landscape": 2, "square": 3}
+    if orientation not in orientation_map:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported orientation", status_code=400)
+    if min_width < 0 or min_height < 0 or min_pixels < 0:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported min_*", status_code=400)
 
     engine = request.app.state.engine
     Session = create_sessionmaker(engine)
@@ -41,6 +51,10 @@ async def random_image(
             r=random.random(),
             r18=r18,
             r18_strict=bool(r18_strict),
+            orientation=orientation_map[orientation],
+            min_width=min_width,
+            min_height=min_height,
+            min_pixels=min_pixels,
         )
         if image is None:
             raise ApiError(code=ErrorCode.NO_MATCH, message="No matching image.", status_code=404)
