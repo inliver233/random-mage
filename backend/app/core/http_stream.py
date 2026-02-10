@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
-from starlette.background import BackgroundTask
 from starlette.responses import StreamingResponse
 
 from app.core.errors import ApiError, ErrorCode
@@ -48,16 +47,15 @@ async def stream_url(
     content_length = upstream.headers.get("content-length")
 
     async def _iter_bytes() -> Any:
-        async for chunk in upstream.aiter_bytes():
-            yield chunk
+        try:
+            async for chunk in upstream.aiter_bytes():
+                yield chunk
+        finally:
+            await upstream.aclose()
+            await client.aclose()
 
-    async def _cleanup() -> None:
-        await upstream.aclose()
-        await client.aclose()
-
-    resp = StreamingResponse(_iter_bytes(), status_code=200, media_type=media_type, background=BackgroundTask(_cleanup))
+    resp = StreamingResponse(_iter_bytes(), status_code=200, media_type=media_type)
     resp.headers["Cache-Control"] = cache_control
     if content_length:
         resp.headers["Content-Length"] = content_length
     return resp
-
