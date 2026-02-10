@@ -3,12 +3,15 @@ from __future__ import annotations
 import asyncio
 import os
 import signal
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 from app.easy_proxies.auto_refresh import EasyProxiesAutoRefreshConfig, EasyProxiesAutoRefresher
 from app.core.config import load_settings
 from app.core.logging import configure_logging, get_logger
+from app.core.runtime_settings import set_runtime_setting
+from app.core.time import iso_utc_ms
 from app.db.engine import create_engine
 
 log = get_logger(__name__)
@@ -79,7 +82,30 @@ async def main_async(*, max_iterations: int | None = None, poll_interval_s: floa
         if refresher.enabled:
             log.info("easy_proxies_auto_refresh_enabled base_url=%s interval_s=%s", base_url, interval_s)
 
+        worker_id = (os.environ.get("WORKER_ID") or f"pid{os.getpid()}").strip()
+        try:
+            heartbeat_interval_s = float((os.environ.get("WORKER_HEARTBEAT_INTERVAL_SECONDS") or "10").strip() or "10")
+        except Exception:
+            heartbeat_interval_s = 10.0
+        heartbeat_interval_s = max(1.0, min(float(heartbeat_interval_s), 300.0))
+        last_heartbeat_m = 0.0
+
         async def _on_tick() -> None:
+            nonlocal last_heartbeat_m
+            now_m = time.monotonic()
+            if now_m - last_heartbeat_m >= heartbeat_interval_s:
+                last_heartbeat_m = now_m
+                try:
+                    await set_runtime_setting(
+                        engine,
+                        key="worker.last_seen_at",
+                        value={"at": iso_utc_ms(), "worker_id": worker_id, "pid": int(os.getpid())},
+                        description="worker heartbeat",
+                        updated_by=f"worker:{worker_id}",
+                    )
+                except Exception:
+                    log.warning("worker_heartbeat_update_failed")
+
             await refresher.tick(engine)
             await _poll_once()
 

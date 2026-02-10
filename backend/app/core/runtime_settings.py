@@ -4,10 +4,12 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.core.logging import get_logger
+from app.core.time import iso_utc_ms
 from app.db.models.runtime_settings import RuntimeSetting
 from app.db.session import create_sessionmaker, with_sqlite_busy_retry
 
@@ -108,3 +110,45 @@ async def load_runtime_config(engine: AsyncEngine) -> RuntimeConfig:
     values = await fetch_runtime_settings(engine)
     return runtime_config_from_values(values)
 
+
+async def set_runtime_setting(
+    engine: AsyncEngine,
+    *,
+    key: str,
+    value: Any,
+    description: str | None = None,
+    updated_by: str | None = None,
+) -> None:
+    key = (key or "").strip()
+    if not key:
+        raise ValueError("key is required")
+
+    value_json = json.dumps(value, separators=(",", ":"), sort_keys=True, ensure_ascii=False)
+    now = iso_utc_ms()
+
+    Session = create_sessionmaker(engine)
+
+    async def _op() -> None:
+        async with Session() as session:
+            stmt = sqlite_insert(RuntimeSetting).values(
+                key=key,
+                value_json=value_json,
+                description=description,
+                updated_at=now,
+                updated_by=updated_by,
+            )
+            set_values: dict[str, Any] = {
+                "value_json": value_json,
+                "updated_at": now,
+                "updated_by": updated_by,
+            }
+            if description is not None:
+                set_values["description"] = description
+            stmt = stmt.on_conflict_do_update(
+                index_elements=[RuntimeSetting.key],
+                set_=set_values,
+            )
+            await session.execute(stmt)
+            await session.commit()
+
+    await with_sqlite_busy_retry(_op)
