@@ -4,6 +4,7 @@ import random
 from typing import Any
 
 from fastapi import APIRouter, Request
+from fastapi.responses import RedirectResponse
 
 from app.core.errors import ApiError, ErrorCode
 from app.core.http_stream import stream_url
@@ -18,9 +19,12 @@ router = APIRouter()
 async def random_image(
     request: Request,
     format: str = "image",
+    redirect: int = 0,
 ) -> Any:
     if format not in {"image", "json"}:
         raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported format", status_code=400)
+    if redirect not in {0, 1}:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported redirect", status_code=400)
 
     engine = request.app.state.engine
     Session = create_sessionmaker(engine)
@@ -29,6 +33,13 @@ async def random_image(
         image = await pick_random_image(session, r=random.random())
         if image is None:
             raise ApiError(code=ErrorCode.NO_MATCH, message="No matching image.", status_code=404)
+
+    if format == "image" and redirect == 1:
+        return RedirectResponse(
+            url=f"/i/{image.id}.{image.ext}",
+            status_code=302,
+            headers={"Cache-Control": "no-store"},
+        )
 
     if format == "json":
         runtime = await load_runtime_config(engine)

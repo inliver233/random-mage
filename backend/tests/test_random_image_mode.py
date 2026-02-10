@@ -56,6 +56,53 @@ def test_random_image_streams_bytes(tmp_path: Path, monkeypatch) -> None:
         assert resp.headers["X-Request-Id"] == "req_test"
 
 
+def test_random_image_redirects_to_proxy_path(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "random_redirect.db"
+    db_url = "sqlite+aiosqlite:///" + db_path.as_posix()
+
+    monkeypatch.setenv("APP_ENV", "dev")
+    monkeypatch.setenv("DATABASE_URL", db_url)
+
+    app = create_app()
+    image_id: int | None = None
+
+    async def _seed() -> None:
+        async with app.state.engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        Session = create_sessionmaker(app.state.engine)
+        async with Session() as session:
+            img = Image(
+                illust_id=123,
+                page_index=0,
+                ext="jpg",
+                original_url="https://example.test/origin.jpg",
+                proxy_path="/i/1.jpg",
+                random_key=0.5,
+            )
+            session.add(img)
+            await session.commit()
+            await session.refresh(img)
+            nonlocal image_id
+            image_id = img.id
+
+        await app.state.engine.dispose()
+
+    asyncio.run(_seed())
+    assert image_id is not None
+
+    with TestClient(app) as client:
+        resp = client.get(
+            "/random?redirect=1",
+            headers={"X-Request-Id": "req_test"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+        assert resp.headers["Location"] == f"/i/{image_id}.jpg"
+        assert resp.headers["Cache-Control"] == "no-store"
+        assert resp.headers["X-Request-Id"] == "req_test"
+
+
 def test_random_image_no_match_returns_404(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "random_image_empty.db"
     db_url = "sqlite+aiosqlite:///" + db_path.as_posix()
