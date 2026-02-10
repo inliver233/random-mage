@@ -121,7 +121,51 @@ async def random_image(
             created_to=created_to_norm,
         )
         if image is None:
-            raise ApiError(code=ErrorCode.NO_MATCH, message="No matching image.", status_code=404)
+            applied_filters: dict[str, Any] = {
+                "r18": r18,
+                "r18_strict": int(r18_strict),
+                "orientation": orientation,
+                "min_width": int(min_width),
+                "min_height": int(min_height),
+                "min_pixels": int(min_pixels),
+            }
+            if included:
+                applied_filters["included_tags"] = included
+            if excluded:
+                applied_filters["excluded_tags"] = excluded
+            if user_id is not None:
+                applied_filters["user_id"] = int(user_id)
+            if illust_id is not None:
+                applied_filters["illust_id"] = int(illust_id)
+            if created_from_norm is not None:
+                applied_filters["created_from"] = created_from_norm
+            if created_to_norm is not None:
+                applied_filters["created_to"] = created_to_norm
+
+            suggestions: list[str] = ["run hydration backfill to improve metadata coverage"]
+            if r18 == 0 and int(r18_strict) == 1:
+                suggestions.append("set r18_strict=0 to allow unknown x_restrict")
+            if orientation != "any":
+                suggestions.append("set orientation=any")
+            if int(min_width) > 0 or int(min_height) > 0 or int(min_pixels) > 0:
+                suggestions.append("lower min_width/min_height/min_pixels")
+            if included:
+                suggestions.append("relax included_tags")
+            if excluded:
+                suggestions.append("relax excluded_tags")
+            if user_id is not None:
+                suggestions.append("remove user_id filter")
+            if illust_id is not None:
+                suggestions.append("remove illust_id filter")
+            if created_from_norm is not None or created_to_norm is not None:
+                suggestions.append("widen created_from/created_to window")
+
+            raise ApiError(
+                code=ErrorCode.NO_MATCH,
+                message="No matching image.",
+                status_code=404,
+                details={"hints": {"applied_filters": applied_filters, "suggestions": suggestions}},
+            )
         if format == "json":
             tags = await get_tag_names_for_image(session, image_id=image.id)
 

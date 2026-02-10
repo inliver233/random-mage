@@ -128,6 +128,9 @@ def test_random_image_no_match_returns_404(tmp_path: Path, monkeypatch) -> None:
         assert body["ok"] is False
         assert body["code"] == "NO_MATCH"
         assert body["request_id"] == "req_test"
+        hints = body["details"]["hints"]
+        assert hints["applied_filters"]["r18"] == 0
+        assert isinstance(hints["suggestions"], list)
 
 
 def test_random_json_returns_shape_and_hides_origin_by_default(tmp_path: Path, monkeypatch) -> None:
