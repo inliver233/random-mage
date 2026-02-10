@@ -54,9 +54,8 @@ def test_images_upsert_by_illust_page(tmp_path: Path) -> None:
             imgs = (await session.execute(select(Image))).scalars().all()
             assert len(imgs) == 1
             assert imgs[0].original_url == "https://example.test/new.jpg"
-            assert imgs[0].random_key == 0.2
+            assert imgs[0].random_key == 0.1
 
         await engine.dispose()
 
     asyncio.run(_run())
-

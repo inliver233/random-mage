@@ -35,7 +35,6 @@ async def upsert_image_by_illust_page(
             "ext": stmt.excluded.ext,
             "original_url": stmt.excluded.original_url,
             "proxy_path": stmt.excluded.proxy_path,
-            "random_key": stmt.excluded.random_key,
             "created_import_id": stmt.excluded.created_import_id,
             "updated_at": now_expr,
         },
@@ -43,4 +42,3 @@ async def upsert_image_by_illust_page(
 
     result = await session.execute(stmt)
     return int(result.scalar_one())
-
