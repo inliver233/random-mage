@@ -36,6 +36,12 @@ def create_app() -> FastAPI:
     app.state.settings = settings
     app.state.engine = create_engine(settings.database_url)
 
+    @app.on_event("shutdown")
+    async def _shutdown() -> None:  # type: ignore[no-redef]
+        engine = getattr(app.state, "engine", None)
+        if engine is not None:
+            await engine.dispose()
+
     app.include_router(healthz_router)
     app.include_router(random_router)
     app.include_router(version_router)

@@ -28,51 +28,41 @@ def test_admin_imports_json_happy_path(tmp_path: Path, monkeypatch) -> None:
     asyncio.run(_migrate())
 
     token = create_jwt(secret_key="secret_test", subject="admin", ttl_s=3600)
-    client = TestClient(app)
+    with TestClient(app) as client:
+        text = "\n".join(
+            [
+                "https://i.pximg.net/img-original/img/2023/01/01/00/00/00/12345678_p0.jpg",
+                "https://i.pximg.net/img-original/img/2023/01/01/00/00/00/12345678_p0.jpg",
+                "https://i.pximg.net/img-original/img/2023/01/01/00/00/00/12345678_p1.png",
+                "https://www.pixiv.net/artworks/12345678",
+            ]
+        )
 
-    text = "\n".join(
-        [
-            "https://i.pximg.net/img-original/img/2023/01/01/00/00/00/12345678_p0.jpg",
-            "https://i.pximg.net/img-original/img/2023/01/01/00/00/00/12345678_p0.jpg",
-            "https://i.pximg.net/img-original/img/2023/01/01/00/00/00/12345678_p1.png",
-            "https://www.pixiv.net/artworks/12345678",
-        ]
-    )
+        resp = client.post(
+            "/admin/api/imports",
+            headers={"Authorization": f"Bearer {token}", "X-Request-Id": "req_test"},
+            json={"text": text, "dry_run": False, "hydrate_on_import": False, "source": "manual"},
+        )
 
-    resp = client.post(
-        "/admin/api/imports",
-        headers={"Authorization": f"Bearer {token}", "X-Request-Id": "req_test"},
-        json={"text": text, "dry_run": False, "hydrate_on_import": False, "source": "manual"},
-    )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["accepted"] == 2
+        assert body["deduped"] == 1
+        assert len(body["errors"]) == 1
+        assert body["import_id"].isdigit()
+        assert body["job_id"].isdigit()
+        assert body["request_id"] == "req_test"
+        assert resp.headers["X-Request-Id"] == "req_test"
 
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["ok"] is True
-    assert body["accepted"] == 2
-    assert body["deduped"] == 1
-    assert len(body["errors"]) == 1
-    assert body["import_id"].isdigit()
-    assert body["job_id"].isdigit()
-    assert body["request_id"] == "req_test"
-    assert resp.headers["X-Request-Id"] == "req_test"
+        async def _fetch_import_counts() -> tuple[int, int, int, int]:
+            async with app.state.engine.connect() as conn:
+                result = await conn.exec_driver_sql("SELECT total, accepted, success, failed FROM imports")
+                row = result.fetchone()
+                assert row is not None
+                return (int(row[0]), int(row[1]), int(row[2]), int(row[3]))
 
-    async def _fetch_import_counts() -> tuple[int, int, int, int]:
-        async with app.state.engine.connect() as conn:
-            result = await conn.exec_driver_sql("SELECT total, accepted, success, failed FROM imports")
-            row = result.fetchone()
-            assert row is not None
-            return (int(row[0]), int(row[1]), int(row[2]), int(row[3]))
-
-    assert asyncio.run(_fetch_import_counts()) == (4, 2, 2, 1)
-
-    async def _fetch_import_counts() -> tuple[int, int, int, int]:
-        async with app.state.engine.connect() as conn:
-            result = await conn.exec_driver_sql("SELECT total, accepted, success, failed FROM imports")
-            row = result.fetchone()
-            assert row is not None
-            return (int(row[0]), int(row[1]), int(row[2]), int(row[3]))
-
-    assert asyncio.run(_fetch_import_counts()) == (4, 2, 2, 1)
+        assert asyncio.run(_fetch_import_counts()) == (4, 2, 2, 1)
 
 
 def test_admin_imports_multipart_happy_path(tmp_path: Path, monkeypatch) -> None:
@@ -93,34 +83,33 @@ def test_admin_imports_multipart_happy_path(tmp_path: Path, monkeypatch) -> None
     asyncio.run(_migrate())
 
     token = create_jwt(secret_key="secret_test", subject="admin", ttl_s=3600)
-    client = TestClient(app)
+    with TestClient(app) as client:
+        text = "\n".join(
+            [
+                "https://i.pximg.net/img-original/img/2023/01/01/00/00/00/12345678_p0.jpg",
+                "https://i.pximg.net/img-original/img/2023/01/01/00/00/00/12345678_p0.jpg",
+                "https://i.pximg.net/img-original/img/2023/01/01/00/00/00/12345678_p1.png",
+                "https://www.pixiv.net/artworks/12345678",
+            ]
+        )
 
-    text = "\n".join(
-        [
-            "https://i.pximg.net/img-original/img/2023/01/01/00/00/00/12345678_p0.jpg",
-            "https://i.pximg.net/img-original/img/2023/01/01/00/00/00/12345678_p0.jpg",
-            "https://i.pximg.net/img-original/img/2023/01/01/00/00/00/12345678_p1.png",
-            "https://www.pixiv.net/artworks/12345678",
-        ]
-    )
+        resp = client.post(
+            "/admin/api/imports",
+            headers={"Authorization": f"Bearer {token}", "X-Request-Id": "req_test"},
+            data={"dry_run": "false", "hydrate_on_import": "false", "source": "manual"},
+            files={"file": ("urls.txt", text.encode("utf-8"), "text/plain")},
+        )
 
-    resp = client.post(
-        "/admin/api/imports",
-        headers={"Authorization": f"Bearer {token}", "X-Request-Id": "req_test"},
-        data={"dry_run": "false", "hydrate_on_import": "false", "source": "manual"},
-        files={"file": ("urls.txt", text.encode("utf-8"), "text/plain")},
-    )
-
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["ok"] is True
-    assert body["accepted"] == 2
-    assert body["deduped"] == 1
-    assert len(body["errors"]) == 1
-    assert body["import_id"].isdigit()
-    assert body["job_id"].isdigit()
-    assert body["request_id"] == "req_test"
-    assert resp.headers["X-Request-Id"] == "req_test"
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["accepted"] == 2
+        assert body["deduped"] == 1
+        assert len(body["errors"]) == 1
+        assert body["import_id"].isdigit()
+        assert body["job_id"].isdigit()
+        assert body["request_id"] == "req_test"
+        assert resp.headers["X-Request-Id"] == "req_test"
 
 
 def test_admin_imports_dry_run_preview_does_not_write_db(tmp_path: Path, monkeypatch) -> None:
@@ -141,40 +130,39 @@ def test_admin_imports_dry_run_preview_does_not_write_db(tmp_path: Path, monkeyp
     asyncio.run(_migrate())
 
     token = create_jwt(secret_key="secret_test", subject="admin", ttl_s=3600)
-    client = TestClient(app)
+    with TestClient(app) as client:
+        text = "\n".join(
+            [
+                "https://i.pximg.net/img-original/img/2023/01/01/00/00/00/12345678_p0.jpg",
+                "https://i.pximg.net/img-original/img/2023/01/01/00/00/00/12345678_p0.jpg",
+                "https://i.pximg.net/img-original/img/2023/01/01/00/00/00/12345678_p1.png",
+                "https://www.pixiv.net/artworks/12345678",
+            ]
+        )
 
-    text = "\n".join(
-        [
-            "https://i.pximg.net/img-original/img/2023/01/01/00/00/00/12345678_p0.jpg",
-            "https://i.pximg.net/img-original/img/2023/01/01/00/00/00/12345678_p0.jpg",
-            "https://i.pximg.net/img-original/img/2023/01/01/00/00/00/12345678_p1.png",
-            "https://www.pixiv.net/artworks/12345678",
-        ]
-    )
+        resp = client.post(
+            "/admin/api/imports",
+            headers={"Authorization": f"Bearer {token}", "X-Request-Id": "req_test"},
+            json={"text": text, "dry_run": True, "hydrate_on_import": False, "source": "manual"},
+        )
 
-    resp = client.post(
-        "/admin/api/imports",
-        headers={"Authorization": f"Bearer {token}", "X-Request-Id": "req_test"},
-        json={"text": text, "dry_run": True, "hydrate_on_import": False, "source": "manual"},
-    )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["accepted"] == 2
+        assert body["deduped"] == 1
+        assert len(body["errors"]) == 1
+        assert len(body["preview"]) == 2
+        assert body["import_id"] == ""
+        assert body["job_id"] == ""
+        assert body["request_id"] == "req_test"
 
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["ok"] is True
-    assert body["accepted"] == 2
-    assert body["deduped"] == 1
-    assert len(body["errors"]) == 1
-    assert len(body["preview"]) == 2
-    assert body["import_id"] == ""
-    assert body["job_id"] == ""
-    assert body["request_id"] == "req_test"
+        async def _count_images() -> int:
+            async with app.state.engine.connect() as conn:
+                result = await conn.exec_driver_sql("SELECT COUNT(*) FROM images")
+                return int(result.scalar_one())
 
-    async def _count_images() -> int:
-        async with app.state.engine.connect() as conn:
-            result = await conn.exec_driver_sql("SELECT COUNT(*) FROM images")
-            return int(result.scalar_one())
-
-    assert asyncio.run(_count_images()) == 0
+        assert asyncio.run(_count_images()) == 0
 
 
 def test_admin_imports_rollback_disable_and_delete(tmp_path: Path, monkeypatch) -> None:
@@ -195,46 +183,45 @@ def test_admin_imports_rollback_disable_and_delete(tmp_path: Path, monkeypatch) 
     asyncio.run(_migrate())
 
     token = create_jwt(secret_key="secret_test", subject="admin", ttl_s=3600)
-    client = TestClient(app)
+    with TestClient(app) as client:
+        text = "\n".join(
+            [
+                "https://i.pximg.net/img-original/img/2023/01/01/00/00/00/12345678_p0.jpg",
+                "https://i.pximg.net/img-original/img/2023/01/01/00/00/00/12345678_p1.png",
+            ]
+        )
 
-    text = "\n".join(
-        [
-            "https://i.pximg.net/img-original/img/2023/01/01/00/00/00/12345678_p0.jpg",
-            "https://i.pximg.net/img-original/img/2023/01/01/00/00/00/12345678_p1.png",
-        ]
-    )
+        create_resp = client.post(
+            "/admin/api/imports",
+            headers={"Authorization": f"Bearer {token}", "X-Request-Id": "req_test"},
+            json={"text": text, "dry_run": False, "hydrate_on_import": False, "source": "manual"},
+        )
+        assert create_resp.status_code == 200
+        import_id = int(create_resp.json()["import_id"])
 
-    create_resp = client.post(
-        "/admin/api/imports",
-        headers={"Authorization": f"Bearer {token}", "X-Request-Id": "req_test"},
-        json={"text": text, "dry_run": False, "hydrate_on_import": False, "source": "manual"},
-    )
-    assert create_resp.status_code == 200
-    import_id = int(create_resp.json()["import_id"])
+        disable_resp = client.post(
+            f"/admin/api/imports/{import_id}/rollback",
+            headers={"Authorization": f"Bearer {token}", "X-Request-Id": "req_test"},
+            json={"mode": "disable"},
+        )
+        assert disable_resp.status_code == 200
+        assert disable_resp.json()["updated"] == 2
 
-    disable_resp = client.post(
-        f"/admin/api/imports/{import_id}/rollback",
-        headers={"Authorization": f"Bearer {token}", "X-Request-Id": "req_test"},
-        json={"mode": "disable"},
-    )
-    assert disable_resp.status_code == 200
-    assert disable_resp.json()["updated"] == 2
+        async def _count_status(status: int) -> int:
+            async with app.state.engine.connect() as conn:
+                result = await conn.exec_driver_sql(
+                    "SELECT COUNT(*) FROM images WHERE created_import_id = ? AND status = ?",
+                    (import_id, status),
+                )
+                return int(result.scalar_one())
 
-    async def _count_status(status: int) -> int:
-        async with app.state.engine.connect() as conn:
-            result = await conn.exec_driver_sql(
-                "SELECT COUNT(*) FROM images WHERE created_import_id = ? AND status = ?",
-                (import_id, status),
-            )
-            return int(result.scalar_one())
+        assert asyncio.run(_count_status(2)) == 2
 
-    assert asyncio.run(_count_status(2)) == 2
-
-    delete_resp = client.post(
-        f"/admin/api/imports/{import_id}/rollback",
-        headers={"Authorization": f"Bearer {token}", "X-Request-Id": "req_test"},
-        json={"mode": "delete"},
-    )
-    assert delete_resp.status_code == 200
-    assert delete_resp.json()["updated"] == 2
-    assert asyncio.run(_count_status(4)) == 2
+        delete_resp = client.post(
+            f"/admin/api/imports/{import_id}/rollback",
+            headers={"Authorization": f"Bearer {token}", "X-Request-Id": "req_test"},
+            json={"mode": "delete"},
+        )
+        assert delete_resp.status_code == 200
+        assert delete_resp.json()["updated"] == 2
+        assert asyncio.run(_count_status(4)) == 2
