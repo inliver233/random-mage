@@ -78,6 +78,25 @@ def _excluded_tags_where_clause(*, tag_names: Sequence[str]) -> object | None:
     return Image.id.not_in(subq)
 
 
+def _exclude_image_ids_where_clause(*, image_ids: Sequence[int] | None) -> object | None:
+    if not image_ids:
+        return None
+    ids: list[int] = []
+    seen: set[int] = set()
+    for raw in image_ids:
+        try:
+            value = int(raw)
+        except Exception:
+            continue
+        if value <= 0 or value in seen:
+            continue
+        seen.add(value)
+        ids.append(value)
+    if not ids:
+        return None
+    return Image.id.not_in(ids)
+
+
 async def pick_random_image(
     session: AsyncSession,
     *,
@@ -94,6 +113,7 @@ async def pick_random_image(
     illust_id: int | None = None,
     created_from: str | None = None,
     created_to: str | None = None,
+    exclude_image_ids: Sequence[int] | None = None,
 ) -> Image | None:
     r = float(r)
     if r < 0.0:
@@ -105,6 +125,7 @@ async def pick_random_image(
     orientation_clause = _orientation_where_clause(orientation=orientation)
     included_tags_clause = _included_tags_where_clause(tag_names=included_tags or [])
     excluded_tags_clause = _excluded_tags_where_clause(tag_names=excluded_tags or [])
+    exclude_ids_clause = _exclude_image_ids_where_clause(image_ids=exclude_image_ids)
 
     min_width_i = int(min_width)
     min_height_i = int(min_height)
@@ -121,6 +142,8 @@ async def pick_random_image(
         clauses.append(included_tags_clause)
     if excluded_tags_clause is not None:
         clauses.append(excluded_tags_clause)
+    if exclude_ids_clause is not None:
+        clauses.append(exclude_ids_clause)
     if min_width_i > 0:
         clauses.append(Image.width >= min_width_i)
     if min_height_i > 0:

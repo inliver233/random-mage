@@ -24,6 +24,7 @@ async def random_image(
     request: Request,
     format: str = "image",
     redirect: int = 0,
+    attempts: int = 3,
     r18: int = 0,
     r18_strict: int = 1,
     orientation: str = "any",
@@ -41,6 +42,8 @@ async def random_image(
         raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported format", status_code=400)
     if redirect not in {0, 1}:
         raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported redirect", status_code=400)
+    if attempts < 1 or attempts > 10:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported attempts", status_code=400)
     if r18 not in {0, 1, 2}:
         raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported r18", status_code=400)
     if r18_strict not in {0, 1}:
@@ -99,84 +102,87 @@ async def random_image(
         if created_from_norm > created_to_norm:
             raise ApiError(code=ErrorCode.BAD_REQUEST, message="created_from > created_to", status_code=400)
 
+    def _no_match_error() -> ApiError:
+        applied_filters: dict[str, Any] = {
+            "r18": r18,
+            "r18_strict": int(r18_strict),
+            "orientation": orientation,
+            "min_width": int(min_width),
+            "min_height": int(min_height),
+            "min_pixels": int(min_pixels),
+        }
+        if included:
+            applied_filters["included_tags"] = included
+        if excluded:
+            applied_filters["excluded_tags"] = excluded
+        if user_id is not None:
+            applied_filters["user_id"] = int(user_id)
+        if illust_id is not None:
+            applied_filters["illust_id"] = int(illust_id)
+        if created_from_norm is not None:
+            applied_filters["created_from"] = created_from_norm
+        if created_to_norm is not None:
+            applied_filters["created_to"] = created_to_norm
+
+        suggestions: list[str] = ["run hydration backfill to improve metadata coverage"]
+        if r18 == 0 and int(r18_strict) == 1:
+            suggestions.append("set r18_strict=0 to allow unknown x_restrict")
+        if orientation != "any":
+            suggestions.append("set orientation=any")
+        if int(min_width) > 0 or int(min_height) > 0 or int(min_pixels) > 0:
+            suggestions.append("lower min_width/min_height/min_pixels")
+        if included:
+            suggestions.append("relax included_tags")
+        if excluded:
+            suggestions.append("relax excluded_tags")
+        if user_id is not None:
+            suggestions.append("remove user_id filter")
+        if illust_id is not None:
+            suggestions.append("remove illust_id filter")
+        if created_from_norm is not None or created_to_norm is not None:
+            suggestions.append("widen created_from/created_to window")
+
+        return ApiError(
+            code=ErrorCode.NO_MATCH,
+            message="No matching image.",
+            status_code=404,
+            details={"hints": {"applied_filters": applied_filters, "suggestions": suggestions}},
+        )
+
     engine = request.app.state.engine
     Session = create_sessionmaker(engine)
 
-    tags: list[str] = []
-    async with Session() as session:
-        image = await pick_random_image(
-            session,
-            r=random.random(),
-            r18=r18,
-            r18_strict=bool(r18_strict),
-            orientation=orientation_map[orientation],
-            min_width=min_width,
-            min_height=min_height,
-            min_pixels=min_pixels,
-            included_tags=included,
-            excluded_tags=excluded,
-            user_id=user_id,
-            illust_id=illust_id,
-            created_from=created_from_norm,
-            created_to=created_to_norm,
-        )
-        if image is None:
-            applied_filters: dict[str, Any] = {
-                "r18": r18,
-                "r18_strict": int(r18_strict),
-                "orientation": orientation,
-                "min_width": int(min_width),
-                "min_height": int(min_height),
-                "min_pixels": int(min_pixels),
-            }
-            if included:
-                applied_filters["included_tags"] = included
-            if excluded:
-                applied_filters["excluded_tags"] = excluded
-            if user_id is not None:
-                applied_filters["user_id"] = int(user_id)
-            if illust_id is not None:
-                applied_filters["illust_id"] = int(illust_id)
-            if created_from_norm is not None:
-                applied_filters["created_from"] = created_from_norm
-            if created_to_norm is not None:
-                applied_filters["created_to"] = created_to_norm
+    pick_kwargs: dict[str, Any] = {
+        "r18": r18,
+        "r18_strict": bool(r18_strict),
+        "orientation": orientation_map[orientation],
+        "min_width": min_width,
+        "min_height": min_height,
+        "min_pixels": min_pixels,
+        "included_tags": included,
+        "excluded_tags": excluded,
+        "user_id": user_id,
+        "illust_id": illust_id,
+        "created_from": created_from_norm,
+        "created_to": created_to_norm,
+    }
 
-            suggestions: list[str] = ["run hydration backfill to improve metadata coverage"]
-            if r18 == 0 and int(r18_strict) == 1:
-                suggestions.append("set r18_strict=0 to allow unknown x_restrict")
-            if orientation != "any":
-                suggestions.append("set orientation=any")
-            if int(min_width) > 0 or int(min_height) > 0 or int(min_pixels) > 0:
-                suggestions.append("lower min_width/min_height/min_pixels")
-            if included:
-                suggestions.append("relax included_tags")
-            if excluded:
-                suggestions.append("relax excluded_tags")
-            if user_id is not None:
-                suggestions.append("remove user_id filter")
-            if illust_id is not None:
-                suggestions.append("remove illust_id filter")
-            if created_from_norm is not None or created_to_norm is not None:
-                suggestions.append("widen created_from/created_to window")
+    if format == "json" or (format == "image" and redirect == 1):
+        tags: list[str] = []
+        async with Session() as session:
+            image = await pick_random_image(session, r=random.random(), **pick_kwargs)
+            if image is None:
+                raise _no_match_error()
+            if format == "json":
+                tags = await get_tag_names_for_image(session, image_id=image.id)
 
-            raise ApiError(
-                code=ErrorCode.NO_MATCH,
-                message="No matching image.",
-                status_code=404,
-                details={"hints": {"applied_filters": applied_filters, "suggestions": suggestions}},
+        if format == "image" and redirect == 1:
+            return RedirectResponse(
+                url=f"/i/{image.id}.{image.ext}",
+                status_code=302,
+                headers={"Cache-Control": "no-store"},
             )
-        if format == "json":
-            tags = await get_tag_names_for_image(session, image_id=image.id)
 
-    if format == "image" and redirect == 1:
-        return RedirectResponse(
-            url=f"/i/{image.id}.{image.ext}",
-            status_code=302,
-            headers={"Cache-Control": "no-store"},
-        )
-
-    if format == "json":
         runtime = await load_runtime_config(engine)
         origin_url = None if runtime.hide_origin_url_in_public_json else image.original_url
 
@@ -215,10 +221,52 @@ async def random_image(
             },
         }
 
-    transport = getattr(request.app.state, "httpx_transport", None)
-    return await stream_url(
-        image.original_url,
-        transport=transport,
-        cache_control="no-store",
-        range_header=request.headers.get("Range"),
+    tried_ids: set[int] = set()
+    last_error: ApiError | None = None
+    attempts_i = int(attempts)
+
+    for _ in range(attempts_i):
+        async with Session() as session:
+            image = await pick_random_image(
+                session,
+                r=random.random(),
+                exclude_image_ids=list(tried_ids),
+                **pick_kwargs,
+            )
+            if image is None:
+                break
+            image_id = int(image.id)
+            origin_url = str(image.original_url)
+
+        transport = getattr(request.app.state, "httpx_transport", None)
+        try:
+            return await stream_url(
+                origin_url,
+                transport=transport,
+                cache_control="no-store",
+                range_header=request.headers.get("Range"),
+            )
+        except ApiError as exc:
+            if exc.code in {
+                ErrorCode.UPSTREAM_STREAM_ERROR,
+                ErrorCode.UPSTREAM_403,
+                ErrorCode.UPSTREAM_404,
+                ErrorCode.UPSTREAM_RATE_LIMIT,
+            }:
+                tried_ids.add(image_id)
+                last_error = exc
+                continue
+            raise
+
+    if last_error is None:
+        raise _no_match_error()
+
+    raise ApiError(
+        code=ErrorCode.UPSTREAM_STREAM_ERROR,
+        message="Upstream request failed after attempts.",
+        status_code=502,
+        details={
+            "attempts_used": len(tried_ids),
+            "last_upstream_code": last_error.code.value,
+        },
     )
