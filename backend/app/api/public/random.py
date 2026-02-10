@@ -31,6 +31,8 @@ async def random_image(
     min_pixels: int = 0,
     included_tags: list[str] | None = Query(default=None),
     excluded_tags: list[str] | None = Query(default=None),
+    user_id: int | None = None,
+    illust_id: int | None = None,
 ) -> Any:
     if format not in {"image", "json"}:
         raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported format", status_code=400)
@@ -63,6 +65,10 @@ async def random_image(
     excluded = _parse_tags(excluded_tags)
     if len(included) > _MAX_TAG_FILTERS or len(excluded) > _MAX_TAG_FILTERS:
         raise ApiError(code=ErrorCode.BAD_REQUEST, message="Too many tag filters", status_code=400)
+    if user_id is not None and int(user_id) <= 0:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported user_id", status_code=400)
+    if illust_id is not None and int(illust_id) <= 0:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported illust_id", status_code=400)
 
     engine = request.app.state.engine
     Session = create_sessionmaker(engine)
@@ -80,6 +86,8 @@ async def random_image(
             min_pixels=min_pixels,
             included_tags=included,
             excluded_tags=excluded,
+            user_id=user_id,
+            illust_id=illust_id,
         )
         if image is None:
             raise ApiError(code=ErrorCode.NO_MATCH, message="No matching image.", status_code=404)

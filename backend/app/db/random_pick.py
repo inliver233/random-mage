@@ -90,6 +90,8 @@ async def pick_random_image(
     min_pixels: int = 0,
     included_tags: Sequence[str] | None = None,
     excluded_tags: Sequence[str] | None = None,
+    user_id: int | None = None,
+    illust_id: int | None = None,
 ) -> Image | None:
     r = float(r)
     if r < 0.0:
@@ -123,6 +125,10 @@ async def pick_random_image(
         clauses.append(Image.height >= min_height_i)
     if min_pixels_i > 0:
         clauses.append((Image.width * Image.height) >= min_pixels_i)
+    if user_id is not None:
+        clauses.append(Image.user_id == int(user_id))
+    if illust_id is not None:
+        clauses.append(Image.illust_id == int(illust_id))
 
     stmt = (
         select(Image)
