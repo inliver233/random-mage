@@ -57,7 +57,7 @@ def test_image_proxy_streams_bytes(tmp_path: Path, monkeypatch) -> None:
         resp = client.get(f"/i/{image_id}.jpg", headers={"X-Request-Id": "req_test"})
         assert resp.status_code == 200
         assert resp.content == b"img-bytes"
-        assert resp.headers["Cache-Control"] == "no-store"
+        assert resp.headers["Cache-Control"] == "public, max-age=31536000, immutable"
         assert resp.headers["X-Request-Id"] == "req_test"
 
 
@@ -143,4 +143,3 @@ def test_image_proxy_invalid_ext_returns_400(tmp_path: Path, monkeypatch) -> Non
         assert body["ok"] is False
         assert body["code"] == "BAD_REQUEST"
         assert body["request_id"] == "req_test"
-

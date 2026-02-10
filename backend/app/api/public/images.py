@@ -33,6 +33,5 @@ async def proxy_image(
     return await stream_url(
         image.original_url,
         transport=transport,
-        cache_control="no-store",
+        cache_control="public, max-age=31536000, immutable",
     )
-
