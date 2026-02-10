@@ -14,6 +14,8 @@ class PixivOriginalUrl:
 
 _PIXIV_ORIGINAL_RE = re.compile(r"(?P<illust_id>\d+)_p(?P<page_index>\d+)\.(?P<ext>[A-Za-z0-9]+)$")
 
+ALLOWED_IMAGE_EXTS = {"jpg", "jpeg", "png", "gif", "webp"}
+
 
 def parse_pixiv_original_url(url: str) -> PixivOriginalUrl:
     url = url.strip()
@@ -35,6 +37,7 @@ def parse_pixiv_original_url(url: str) -> PixivOriginalUrl:
     illust_id = int(m.group("illust_id"))
     page_index = int(m.group("page_index"))
     ext = m.group("ext").lower()
+    if ext not in ALLOWED_IMAGE_EXTS:
+        raise ValueError("unsupported ext")
 
     return PixivOriginalUrl(illust_id=illust_id, page_index=page_index, ext=ext)
-

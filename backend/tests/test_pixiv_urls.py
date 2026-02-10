@@ -30,3 +30,7 @@ def test_parse_pixiv_original_url_rejects_wrong_pattern() -> None:
     with pytest.raises(ValueError, match="unsupported pixiv original url"):
         parse_pixiv_original_url("https://i.pximg.net/img-original/img/2023/01/01/00/00/00/12345678.jpg")
 
+
+def test_parse_pixiv_original_url_rejects_unsupported_ext() -> None:
+    with pytest.raises(ValueError, match="unsupported ext"):
+        parse_pixiv_original_url("https://i.pximg.net/img-original/img/2023/01/01/00/00/00/12345678_p0.bmp")
