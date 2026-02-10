@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import random
-from datetime import datetime, timezone
+import os
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Query, Request
@@ -10,6 +11,8 @@ from fastapi.responses import RedirectResponse
 from app.core.errors import ApiError, ErrorCode
 from app.core.http_stream import stream_url
 from app.core.runtime_settings import load_runtime_config
+from app.core.time import iso_utc_ms
+from app.db.images_mark import mark_image_failure, mark_image_ok
 from app.db.tags_get import get_tag_names_for_image
 from app.db.random_pick import pick_random_image
 from app.db.session import create_sessionmaker
@@ -152,6 +155,17 @@ async def random_image(
     engine = request.app.state.engine
     Session = create_sessionmaker(engine)
 
+    cooldown_s_raw = (os.environ.get("RANDOM_FAIL_COOLDOWN_SECONDS") or "600").strip()
+    try:
+        cooldown_s = int(cooldown_s_raw)
+    except Exception:
+        cooldown_s = 600
+    cooldown_s = max(0, min(int(cooldown_s), 24 * 60 * 60))
+    request_now = datetime.now(timezone.utc)
+    fail_cooldown_before = (
+        iso_utc_ms(request_now - timedelta(seconds=cooldown_s)) if cooldown_s > 0 else None
+    )
+
     pick_kwargs: dict[str, Any] = {
         "r18": r18,
         "r18_strict": bool(r18_strict),
@@ -165,6 +179,7 @@ async def random_image(
         "illust_id": illust_id,
         "created_from": created_from_norm,
         "created_to": created_to_norm,
+        "fail_cooldown_before": fail_cooldown_before,
     }
 
     if format == "json" or (format == "image" and redirect == 1):
@@ -240,12 +255,14 @@ async def random_image(
 
         transport = getattr(request.app.state, "httpx_transport", None)
         try:
-            return await stream_url(
+            resp = await stream_url(
                 origin_url,
                 transport=transport,
                 cache_control="no-store",
                 range_header=request.headers.get("Range"),
             )
+            await mark_image_ok(engine, image_id=image_id, now=iso_utc_ms())
+            return resp
         except ApiError as exc:
             if exc.code in {
                 ErrorCode.UPSTREAM_STREAM_ERROR,
@@ -253,6 +270,13 @@ async def random_image(
                 ErrorCode.UPSTREAM_404,
                 ErrorCode.UPSTREAM_RATE_LIMIT,
             }:
+                await mark_image_failure(
+                    engine,
+                    image_id=image_id,
+                    now=iso_utc_ms(),
+                    error_code=exc.code.value,
+                    error_message=exc.message,
+                )
                 tried_ids.add(image_id)
                 last_error = exc
                 continue

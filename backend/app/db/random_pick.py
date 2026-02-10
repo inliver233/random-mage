@@ -114,6 +114,7 @@ async def pick_random_image(
     created_from: str | None = None,
     created_to: str | None = None,
     exclude_image_ids: Sequence[int] | None = None,
+    fail_cooldown_before: str | None = None,
 ) -> Image | None:
     r = float(r)
     if r < 0.0:
@@ -158,6 +159,8 @@ async def pick_random_image(
         clauses.append(Image.created_at_pixiv >= str(created_from))
     if created_to is not None:
         clauses.append(Image.created_at_pixiv <= str(created_to))
+    if fail_cooldown_before is not None:
+        clauses.append((Image.last_fail_at.is_(None)) | (Image.last_fail_at <= str(fail_cooldown_before)))
 
     stmt = (
         select(Image)
