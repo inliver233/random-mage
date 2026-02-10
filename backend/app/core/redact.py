@@ -17,6 +17,9 @@ _SENSITIVE_KEY_PARTS = (
 
 _BEARER_RE = re.compile(r"(?i)\bBearer\s+([^\s]+)")
 _REFRESH_QUERY_RE = re.compile(r"(?i)(refresh_token=)([^&\s]+)")
+_URI_IN_TEXT_RE = re.compile(r"(?i)(?:https?|socks[45])://[^\s\"']+")
+
+_TRAILING_PUNCT = ".,);:]}"
 
 
 def is_sensitive_key(key: str) -> bool:
@@ -24,7 +27,7 @@ def is_sensitive_key(key: str) -> bool:
     return any(part in key_l for part in _SENSITIVE_KEY_PARTS)
 
 
-def redact_proxy_uri(text: str) -> str:
+def _redact_single_proxy_uri(text: str) -> str:
     # Handles both normal and the common \"password contains @\" variant by treating the last '@' as separator.
     m = re.match(r"^(?P<scheme>https?|socks[45])://(?P<rest>.+)$", text, flags=re.IGNORECASE)
     if not m:
@@ -41,6 +44,22 @@ def redact_proxy_uri(text: str) -> str:
 
     username, _password = userinfo.split(":", 1)
     return f"{scheme}://{username}:{REDACTED}@{hostpart}"
+
+
+def redact_proxy_uri(text: str) -> str:
+    def _strip_trailing_punct(uri: str) -> tuple[str, str]:
+        suffix = ""
+        while uri and uri[-1] in _TRAILING_PUNCT:
+            suffix = uri[-1] + suffix
+            uri = uri[:-1]
+        return uri, suffix
+
+    def _repl(m: re.Match[str]) -> str:
+        full = m.group(0)
+        core, suffix = _strip_trailing_punct(full)
+        return _redact_single_proxy_uri(core) + suffix
+
+    return _URI_IN_TEXT_RE.sub(_repl, text)
 
 
 def redact_text(text: str) -> str:
