@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import signal
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from app.easy_proxies.auto_refresh import EasyProxiesAutoRefreshConfig, EasyProxiesAutoRefresher
 from app.core.config import load_settings
 from app.core.logging import configure_logging, get_logger
 from app.db.engine import create_engine
@@ -60,8 +62,33 @@ async def main_async(*, max_iterations: int | None = None, poll_interval_s: floa
 
     engine = create_engine(settings.database_url)
     try:
+        base_url = (os.environ.get("EASY_PROXIES_BASE_URL") or "").strip()
+        try:
+            interval_s = float((os.environ.get("EASY_PROXIES_REFRESH_INTERVAL_SECONDS") or "0").strip() or "0")
+        except Exception:
+            interval_s = 0.0
+        conflict_policy = (os.environ.get("EASY_PROXIES_CONFLICT_POLICY") or "skip_non_easy_proxies").strip()
+
+        refresher = EasyProxiesAutoRefresher(
+            EasyProxiesAutoRefreshConfig(
+                base_url=base_url,
+                interval_s=interval_s,
+                conflict_policy=conflict_policy or "skip_non_easy_proxies",
+            )
+        )
+        if refresher.enabled:
+            log.info("easy_proxies_auto_refresh_enabled base_url=%s interval_s=%s", base_url, interval_s)
+
+        async def _on_tick() -> None:
+            await refresher.tick(engine)
+            await _poll_once()
+
         log.info("worker_start env=%s", settings.app_env)
-        await run_worker(max_iterations=max_iterations, poll_interval_s=poll_interval_s)
+        await run_worker(
+            max_iterations=max_iterations,
+            poll_interval_s=poll_interval_s,
+            on_tick=_on_tick,
+        )
         log.info("worker_stop")
     finally:
         await engine.dispose()
@@ -75,4 +102,3 @@ def main(argv: list[str] | None = None) -> None:
 
 if __name__ == "__main__":
     main()
-
