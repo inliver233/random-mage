@@ -8,6 +8,7 @@ from typing import Any
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
+from starlette.datastructures import UploadFile
 
 from app.api.admin.deps import get_admin_claims
 from app.core.errors import ApiError, ErrorCode
@@ -72,12 +73,60 @@ def _parse_import_text(text: str) -> tuple[int, list[tuple[str, Any]], int, list
     return total, items, deduped, errors
 
 
+def _parse_bool(value: Any, *, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in {"1", "true", "yes", "y", "on"}:
+            return True
+        if v in {"0", "false", "no", "n", "off"}:
+            return False
+    return default
+
+
+async def _load_import_request(request: Request) -> ImportCreateRequest:
+    content_type = (request.headers.get("content-type") or "").lower()
+
+    if content_type.startswith("application/json"):
+        data = await request.json()
+        if not isinstance(data, dict):
+            raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid JSON body", status_code=400)
+        return ImportCreateRequest(**data)
+
+    if content_type.startswith("multipart/form-data"):
+        form = await request.form()
+        file_obj = form.get("file")
+        if not isinstance(file_obj, UploadFile):
+            raise ApiError(code=ErrorCode.BAD_REQUEST, message="Missing file", status_code=400)
+
+        filename = (file_obj.filename or "").strip().lower()
+        if filename and not filename.endswith(".txt"):
+            raise ApiError(code=ErrorCode.INVALID_UPLOAD_TYPE, message="Unsupported upload type", status_code=400)
+
+        raw = await file_obj.read()
+        text = raw.decode("utf-8", errors="replace")
+
+        return ImportCreateRequest(
+            text=text,
+            dry_run=_parse_bool(form.get("dry_run"), default=False),
+            hydrate_on_import=_parse_bool(form.get("hydrate_on_import"), default=False),
+            source=str(form.get("source") or "manual"),
+        )
+
+    raise ApiError(code=ErrorCode.INVALID_UPLOAD_TYPE, message="Unsupported content type", status_code=400)
+
+
 @router.post("/imports")
 async def create_import(
-    body: ImportCreateRequest,
     request: Request,
     _claims: dict[str, Any] = Depends(get_admin_claims),
 ) -> dict[str, Any]:
+    body = await _load_import_request(request)
     if body.dry_run:
         raise ApiError(code=ErrorCode.BAD_REQUEST, message="dry_run not implemented yet", status_code=400)
 
@@ -159,4 +208,3 @@ async def create_import(
         "errors": [asdict(e) for e in errors[:200]],
         "request_id": rid,
     }
-

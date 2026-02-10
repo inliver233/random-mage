@@ -72,6 +72,8 @@ pytest==8.4.1
     # via -r requirements-dev.in
 python-dotenv==1.2.1
     # via uvicorn
+python-multipart==0.0.22
+    # via -r requirements.in
 pyyaml==6.0.3
     # via uvicorn
 sqlalchemy==2.0.46
