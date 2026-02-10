@@ -92,6 +92,8 @@ async def pick_random_image(
     excluded_tags: Sequence[str] | None = None,
     user_id: int | None = None,
     illust_id: int | None = None,
+    created_from: str | None = None,
+    created_to: str | None = None,
 ) -> Image | None:
     r = float(r)
     if r < 0.0:
@@ -129,6 +131,10 @@ async def pick_random_image(
         clauses.append(Image.user_id == int(user_id))
     if illust_id is not None:
         clauses.append(Image.illust_id == int(illust_id))
+    if created_from is not None:
+        clauses.append(Image.created_at_pixiv >= str(created_from))
+    if created_to is not None:
+        clauses.append(Image.created_at_pixiv <= str(created_to))
 
     stmt = (
         select(Image)

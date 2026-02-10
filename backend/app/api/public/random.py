@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Query, Request
@@ -33,6 +34,8 @@ async def random_image(
     excluded_tags: list[str] | None = Query(default=None),
     user_id: int | None = None,
     illust_id: int | None = None,
+    created_from: str | None = None,
+    created_to: str | None = None,
 ) -> Any:
     if format not in {"image", "json"}:
         raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported format", status_code=400)
@@ -70,6 +73,32 @@ async def random_image(
     if illust_id is not None and int(illust_id) <= 0:
         raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported illust_id", status_code=400)
 
+    def _normalize_iso_utc(value: str) -> str:
+        raw = (value or "").strip()
+        if not raw:
+            raise ValueError("empty datetime")
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        dt = datetime.fromisoformat(raw)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.astimezone(timezone.utc).replace(microsecond=0)
+        return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    created_from_norm: str | None = None
+    created_to_norm: str | None = None
+    try:
+        if created_from is not None:
+            created_from_norm = _normalize_iso_utc(created_from)
+        if created_to is not None:
+            created_to_norm = _normalize_iso_utc(created_to)
+    except Exception:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported created_*", status_code=400)
+
+    if created_from_norm is not None and created_to_norm is not None:
+        if created_from_norm > created_to_norm:
+            raise ApiError(code=ErrorCode.BAD_REQUEST, message="created_from > created_to", status_code=400)
+
     engine = request.app.state.engine
     Session = create_sessionmaker(engine)
 
@@ -88,6 +117,8 @@ async def random_image(
             excluded_tags=excluded,
             user_id=user_id,
             illust_id=illust_id,
+            created_from=created_from_norm,
+            created_to=created_to_norm,
         )
         if image is None:
             raise ApiError(code=ErrorCode.NO_MATCH, message="No matching image.", status_code=404)
