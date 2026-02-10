@@ -34,4 +34,5 @@ async def proxy_image(
         image.original_url,
         transport=transport,
         cache_control="public, max-age=31536000, immutable",
+        range_header=request.headers.get("Range"),
     )

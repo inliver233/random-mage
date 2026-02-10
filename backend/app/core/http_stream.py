@@ -17,6 +17,7 @@ async def stream_url(
     cache_control: str,
     referer: str = PIXIV_REFERER,
     timeout_s: float = 30.0,
+    range_header: str | None = None,
 ) -> StreamingResponse:
     client = httpx.AsyncClient(
         transport=transport,
@@ -24,7 +25,11 @@ async def stream_url(
         timeout=httpx.Timeout(timeout_s, connect=10.0),
     )
 
-    request_headers = {"Referer": referer} if referer else {}
+    request_headers: dict[str, str] = {}
+    if referer:
+        request_headers["Referer"] = referer
+    if range_header:
+        request_headers["Range"] = range_header
     request = client.build_request("GET", url, headers=request_headers)
 
     try:
@@ -33,7 +38,7 @@ async def stream_url(
         await client.aclose()
         raise ApiError(code=ErrorCode.UPSTREAM_STREAM_ERROR, message="Upstream request failed", status_code=502) from exc
 
-    if upstream.status_code != 200:
+    if upstream.status_code not in {200, 206}:
         status = upstream.status_code
         await upstream.aclose()
         await client.aclose()
@@ -54,8 +59,15 @@ async def stream_url(
             await upstream.aclose()
             await client.aclose()
 
-    resp = StreamingResponse(_iter_bytes(), status_code=200, media_type=media_type)
+    accept_ranges = upstream.headers.get("accept-ranges")
+    content_range = upstream.headers.get("content-range")
+
+    resp = StreamingResponse(_iter_bytes(), status_code=upstream.status_code, media_type=media_type)
     resp.headers["Cache-Control"] = cache_control
     if content_length:
         resp.headers["Content-Length"] = content_length
+    if accept_ranges:
+        resp.headers["Accept-Ranges"] = accept_ranges
+    if content_range:
+        resp.headers["Content-Range"] = content_range
     return resp

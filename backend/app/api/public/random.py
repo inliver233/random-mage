@@ -85,4 +85,5 @@ async def random_image(
         image.original_url,
         transport=transport,
         cache_control="no-store",
+        range_header=request.headers.get("Range"),
     )

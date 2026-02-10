@@ -61,6 +61,70 @@ def test_image_proxy_streams_bytes(tmp_path: Path, monkeypatch) -> None:
         assert resp.headers["X-Request-Id"] == "req_test"
 
 
+def test_image_proxy_range_passthrough_returns_206(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "image_proxy_range.db"
+    db_url = "sqlite+aiosqlite:///" + db_path.as_posix()
+
+    monkeypatch.setenv("APP_ENV", "dev")
+    monkeypatch.setenv("DATABASE_URL", db_url)
+
+    app = create_app()
+    image_id: int | None = None
+
+    async def _seed() -> None:
+        async with app.state.engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        Session = create_sessionmaker(app.state.engine)
+        async with Session() as session:
+            img = Image(
+                illust_id=123,
+                page_index=0,
+                ext="jpg",
+                original_url="https://example.test/origin.jpg",
+                proxy_path="/i/1.jpg",
+                random_key=0.5,
+            )
+            session.add(img)
+            await session.commit()
+            await session.refresh(img)
+            nonlocal image_id
+            image_id = img.id
+
+        await app.state.engine.dispose()
+
+    asyncio.run(_seed())
+    assert image_id is not None
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        assert req.headers.get("Referer") == "https://www.pixiv.net/"
+        assert req.headers.get("Range") == "bytes=0-2"
+        return httpx.Response(
+            206,
+            headers={
+                "Content-Type": "image/jpeg",
+                "Content-Length": "3",
+                "Accept-Ranges": "bytes",
+                "Content-Range": "bytes 0-2/6",
+            },
+            content=b"abc",
+        )
+
+    app.state.httpx_transport = httpx.MockTransport(handler)
+
+    with TestClient(app) as client:
+        resp = client.get(
+            f"/i/{image_id}.jpg",
+            headers={"X-Request-Id": "req_test", "Range": "bytes=0-2"},
+        )
+        assert resp.status_code == 206
+        assert resp.content == b"abc"
+        assert resp.headers["Cache-Control"] == "public, max-age=31536000, immutable"
+        assert resp.headers["Accept-Ranges"] == "bytes"
+        assert resp.headers["Content-Range"] == "bytes 0-2/6"
+        assert resp.headers["X-Request-Id"] == "req_test"
+
+
 def test_image_proxy_ext_mismatch_returns_404(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "image_proxy_mismatch.db"
     db_url = "sqlite+aiosqlite:///" + db_path.as_posix()
