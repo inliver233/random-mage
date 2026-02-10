@@ -1,9 +1,13 @@
 from __future__ import annotations
 
-from sqlalchemy import select
+from collections.abc import Sequence
+
+from sqlalchemy import distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.models.image_tags import ImageTag
 from app.db.models.images import Image
+from app.db.models.tags import Tag
 
 
 def _r18_where_clause(*, r18: int, r18_strict: bool) -> object | None:
@@ -32,6 +36,48 @@ def _orientation_where_clause(*, orientation: int | None) -> object | None:
     return Image.orientation == orientation_i
 
 
+def _clean_tag_names(values: Sequence[str] | None) -> list[str]:
+    if not values:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for v in values:
+        name = str(v or "").strip()
+        if not name:
+            continue
+        if name in seen:
+            continue
+        seen.add(name)
+        out.append(name)
+    return out
+
+
+def _included_tags_where_clause(*, tag_names: Sequence[str]) -> object | None:
+    names = _clean_tag_names(tag_names)
+    if not names:
+        return None
+    subq = (
+        select(ImageTag.image_id)
+        .join(Tag, Tag.id == ImageTag.tag_id)
+        .where(Tag.name.in_(names))
+        .group_by(ImageTag.image_id)
+        .having(func.count(distinct(Tag.name)) == len(names))
+    )
+    return Image.id.in_(subq)
+
+
+def _excluded_tags_where_clause(*, tag_names: Sequence[str]) -> object | None:
+    names = _clean_tag_names(tag_names)
+    if not names:
+        return None
+    subq = (
+        select(ImageTag.image_id)
+        .join(Tag, Tag.id == ImageTag.tag_id)
+        .where(Tag.name.in_(names))
+    )
+    return Image.id.not_in(subq)
+
+
 async def pick_random_image(
     session: AsyncSession,
     *,
@@ -42,6 +88,8 @@ async def pick_random_image(
     min_width: int = 0,
     min_height: int = 0,
     min_pixels: int = 0,
+    included_tags: Sequence[str] | None = None,
+    excluded_tags: Sequence[str] | None = None,
 ) -> Image | None:
     r = float(r)
     if r < 0.0:
@@ -51,6 +99,8 @@ async def pick_random_image(
 
     r18_clause = _r18_where_clause(r18=r18, r18_strict=r18_strict)
     orientation_clause = _orientation_where_clause(orientation=orientation)
+    included_tags_clause = _included_tags_where_clause(tag_names=included_tags or [])
+    excluded_tags_clause = _excluded_tags_where_clause(tag_names=excluded_tags or [])
 
     min_width_i = int(min_width)
     min_height_i = int(min_height)
@@ -63,6 +113,10 @@ async def pick_random_image(
         clauses.append(r18_clause)
     if orientation_clause is not None:
         clauses.append(orientation_clause)
+    if included_tags_clause is not None:
+        clauses.append(included_tags_clause)
+    if excluded_tags_clause is not None:
+        clauses.append(excluded_tags_clause)
     if min_width_i > 0:
         clauses.append(Image.width >= min_width_i)
     if min_height_i > 0:

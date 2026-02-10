@@ -3,16 +3,19 @@ from __future__ import annotations
 import random
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import RedirectResponse
 
 from app.core.errors import ApiError, ErrorCode
 from app.core.http_stream import stream_url
 from app.core.runtime_settings import load_runtime_config
+from app.db.tags_get import get_tag_names_for_image
 from app.db.random_pick import pick_random_image
 from app.db.session import create_sessionmaker
 
 router = APIRouter()
+
+_MAX_TAG_FILTERS = 50
 
 
 @router.get("/random")
@@ -26,6 +29,8 @@ async def random_image(
     min_width: int = 0,
     min_height: int = 0,
     min_pixels: int = 0,
+    included_tags: list[str] | None = Query(default=None),
+    excluded_tags: list[str] | None = Query(default=None),
 ) -> Any:
     if format not in {"image", "json"}:
         raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported format", status_code=400)
@@ -42,9 +47,27 @@ async def random_image(
     if min_width < 0 or min_height < 0 or min_pixels < 0:
         raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported min_*", status_code=400)
 
+    def _parse_tags(values: list[str] | None) -> list[str]:
+        out: list[str] = []
+        seen: set[str] = set()
+        for raw in values or []:
+            for part in str(raw).split("|"):
+                name = part.strip()
+                if not name or name in seen:
+                    continue
+                seen.add(name)
+                out.append(name)
+        return out
+
+    included = _parse_tags(included_tags)
+    excluded = _parse_tags(excluded_tags)
+    if len(included) > _MAX_TAG_FILTERS or len(excluded) > _MAX_TAG_FILTERS:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Too many tag filters", status_code=400)
+
     engine = request.app.state.engine
     Session = create_sessionmaker(engine)
 
+    tags: list[str] = []
     async with Session() as session:
         image = await pick_random_image(
             session,
@@ -55,9 +78,13 @@ async def random_image(
             min_width=min_width,
             min_height=min_height,
             min_pixels=min_pixels,
+            included_tags=included,
+            excluded_tags=excluded,
         )
         if image is None:
             raise ApiError(code=ErrorCode.NO_MATCH, message="No matching image.", status_code=404)
+        if format == "json":
+            tags = await get_tag_names_for_image(session, image_id=image.id)
 
     if format == "image" and redirect == 1:
         return RedirectResponse(
@@ -91,7 +118,7 @@ async def random_image(
                     "title": image.title,
                     "created_at_pixiv": image.created_at_pixiv,
                 },
-                "tags": [],
+                "tags": tags,
                 "urls": {
                     "proxy": f"/i/{image.id}.{image.ext}",
                     "origin": origin_url,
