@@ -127,17 +127,35 @@ async def create_import(
     _claims: dict[str, Any] = Depends(get_admin_claims),
 ) -> dict[str, Any]:
     body = await _load_import_request(request)
-    if body.dry_run:
-        raise ApiError(code=ErrorCode.BAD_REQUEST, message="dry_run not implemented yet", status_code=400)
-
     rid = get_or_create_request_id(request)
 
     total, items, deduped, errors = _parse_import_text(body.text)
 
+    accepted = len(items)
+    preview = [
+        {
+            "illust_id": parsed.illust_id,
+            "page_index": parsed.page_index,
+            "ext": parsed.ext,
+            "url": url,
+        }
+        for url, parsed in items[:20]
+    ]
+
+    if body.dry_run:
+        return {
+            "ok": True,
+            "import_id": "",
+            "job_id": "",
+            "accepted": accepted,
+            "deduped": deduped,
+            "errors": [asdict(e) for e in errors[:200]],
+            "preview": preview,
+            "request_id": rid,
+        }
+
     engine = request.app.state.engine
     Session = create_sessionmaker(engine)
-
-    accepted = len(items)
     success = 0
 
     async with Session() as session:
@@ -206,5 +224,6 @@ async def create_import(
         "accepted": accepted,
         "deduped": deduped,
         "errors": [asdict(e) for e in errors[:200]],
+        "preview": preview,
         "request_id": rid,
     }
