@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import random
 from dataclasses import asdict, dataclass
-from typing import Any
+from typing import Any, Literal
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Request
@@ -28,6 +28,10 @@ class ImportCreateRequest(BaseModel):
     dry_run: bool = False
     hydrate_on_import: bool = False
     source: str = "manual"
+
+
+class ImportRollbackRequest(BaseModel):
+    mode: Literal["disable", "delete"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,5 +229,45 @@ async def create_import(
         "deduped": deduped,
         "errors": [asdict(e) for e in errors[:200]],
         "preview": preview,
+        "request_id": rid,
+    }
+
+
+@router.post("/imports/{import_id}/rollback")
+async def rollback_import(
+    import_id: int,
+    body: ImportRollbackRequest,
+    request: Request,
+    _claims: dict[str, Any] = Depends(get_admin_claims),
+) -> dict[str, Any]:
+    _ = _claims
+    if import_id <= 0:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid import id", status_code=400)
+
+    rid = get_or_create_request_id(request)
+
+    target_status = 2 if body.mode == "disable" else 4
+    now_expr = sa.text("(strftime('%Y-%m-%dT%H:%M:%fZ','now'))")
+
+    engine = request.app.state.engine
+    Session = create_sessionmaker(engine)
+
+    async with Session() as session:
+        imp = await session.get(Import, import_id)
+        if imp is None:
+            raise ApiError(code=ErrorCode.NOT_FOUND, message="Import not found", status_code=404)
+
+        result = await session.execute(
+            sa.update(Image)
+            .where(Image.created_import_id == import_id)
+            .values(status=target_status, updated_at=now_expr)
+        )
+        updated = int(result.rowcount or 0)
+        await session.commit()
+
+    return {
+        "ok": True,
+        "mode": body.mode,
+        "updated": updated,
         "request_id": rid,
     }
