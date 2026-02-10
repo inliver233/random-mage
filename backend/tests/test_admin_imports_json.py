@@ -56,6 +56,24 @@ def test_admin_imports_json_happy_path(tmp_path: Path, monkeypatch) -> None:
     assert body["request_id"] == "req_test"
     assert resp.headers["X-Request-Id"] == "req_test"
 
+    async def _fetch_import_counts() -> tuple[int, int, int, int]:
+        async with app.state.engine.connect() as conn:
+            result = await conn.exec_driver_sql("SELECT total, accepted, success, failed FROM imports")
+            row = result.fetchone()
+            assert row is not None
+            return (int(row[0]), int(row[1]), int(row[2]), int(row[3]))
+
+    assert asyncio.run(_fetch_import_counts()) == (4, 2, 2, 1)
+
+    async def _fetch_import_counts() -> tuple[int, int, int, int]:
+        async with app.state.engine.connect() as conn:
+            result = await conn.exec_driver_sql("SELECT total, accepted, success, failed FROM imports")
+            row = result.fetchone()
+            assert row is not None
+            return (int(row[0]), int(row[1]), int(row[2]), int(row[3]))
+
+    assert asyncio.run(_fetch_import_counts()) == (4, 2, 2, 1)
+
 
 def test_admin_imports_multipart_happy_path(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "admin_imports_multipart.db"
