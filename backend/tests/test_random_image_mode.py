@@ -35,6 +35,7 @@ def test_random_image_streams_bytes(tmp_path: Path, monkeypatch) -> None:
                     original_url="https://example.test/origin.jpg",
                     proxy_path="/i/1.jpg",
                     random_key=0.5,
+                    x_restrict=0,
                 )
             )
             await session.commit()
@@ -79,6 +80,7 @@ def test_random_image_redirects_to_proxy_path(tmp_path: Path, monkeypatch) -> No
                 original_url="https://example.test/origin.jpg",
                 proxy_path="/i/1.jpg",
                 random_key=0.5,
+                x_restrict=0,
             )
             session.add(img)
             await session.commit()
@@ -151,6 +153,7 @@ def test_random_json_returns_shape_and_hides_origin_by_default(tmp_path: Path, m
                     original_url="https://example.test/origin.jpg",
                     proxy_path="/i/1.jpg",
                     random_key=0.5,
+                    x_restrict=0,
                 )
             )
             await session.commit()
