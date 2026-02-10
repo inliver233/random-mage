@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from app.api.public.healthz import router as healthz_router
+from app.api.public.version import router as version_router
 from app.core.config import load_settings
 from app.core.logging import configure_logging
 from app.core.request_id import build_request_id_middleware
@@ -23,6 +24,7 @@ def create_app() -> FastAPI:
     app.state.engine = create_engine(settings.database_url)
 
     app.include_router(healthz_router)
+    app.include_router(version_router)
 
     return app
 
