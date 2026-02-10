@@ -1,0 +1,29 @@
+{
+  "created_at": "2026-02-10T23:47:38+00:00",
+  "endpoint": "/random?format=json&attempts=1",
+  "requests": {
+    "total": 200,
+    "concurrency": 20,
+    "ok": 200,
+    "no_match": 0,
+    "other_error": 0
+  },
+  "latency_s": {
+    "min": 0.037005099991802126,
+    "p50": 0.09645030001411214,
+    "p90": 0.13189268000132867,
+    "p99": 0.18365012301102968,
+    "max": 0.23008509998908266,
+    "mean": 0.1024081725011638
+  },
+  "throughput": {
+    "elapsed_s": 1.0745964999950957,
+    "rps": 186.11637019189322
+  },
+  "seed_images": 2000,
+  "env": {
+    "python": "3.11.6",
+    "platform": "Windows-10-10.0.26100-SP0",
+    "machine": "AMD64"
+  }
+}
