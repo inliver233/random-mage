@@ -16,6 +16,7 @@ import { ProxiesPage } from "../pages/ProxiesPage";
 import { BindingsPage } from "../pages/BindingsPage";
 import { JobsPage } from "../pages/JobsPage";
 import { SettingsPage } from "../pages/SettingsPage";
+import { AuditPage } from "../pages/AuditPage";
 import { PlaceholderPage } from "../pages/PlaceholderPage";
 
 export function App() {
@@ -38,6 +39,7 @@ export function App() {
             <Route path="bindings" element={<BindingsPage />} />
             <Route path="jobs" element={<JobsPage />} />
             <Route path="settings" element={<SettingsPage />} />
+            <Route path="audit" element={<AuditPage />} />
             <Route path="*" element={<PlaceholderPage title="Not Found" />} />
           </Route>
           <Route path="*" element={<PlaceholderPage title="Not Found" />} />
