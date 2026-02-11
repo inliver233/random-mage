@@ -120,6 +120,14 @@ services:
 - `EASY_PROXIES_AUTO_REFRESH=true`
 - `EASY_PROXIES_REFRESH_INTERVAL_MS=1800000`
 
+### 4.5 imgproxy（可选；生产强烈建议开启签名）
+- `IMGPROXY_BASE_URL=http://imgproxy:8080`（你的 imgproxy 服务地址）
+- `IMGPROXY_KEY=...`（hex；必须）
+- `IMGPROXY_SALT=...`（hex；必须）
+- `IMGPROXY_MAX_DIM=2048`（可选；默认 2048）
+- `IMGPROXY_DEFAULT_OPTIONS=rs:fit:2048:2048`（可选；默认按 MAX_DIM 生成）
+- `IMGPROXY_URL_CHUNK_SIZE=16`（可选；默认 16）
+
 ---
 
 ## 5. 备份与升级（必须写成 SOP）

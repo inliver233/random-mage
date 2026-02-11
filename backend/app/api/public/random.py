@@ -10,6 +10,7 @@ from fastapi.responses import RedirectResponse
 
 from app.core.errors import ApiError, ErrorCode
 from app.core.http_stream import stream_url
+from app.core.imgproxy import build_signed_processing_url, load_imgproxy_config_from_settings
 from app.core.runtime_settings import load_runtime_config
 from app.core.time import iso_utc_ms
 from app.db.images_mark import mark_image_failure, mark_image_ok
@@ -237,6 +238,22 @@ async def random_image(
         runtime = await load_runtime_config(engine)
         origin_url = None if runtime.hide_origin_url_in_public_json else image.original_url
 
+        imgproxy_url = None
+        try:
+            cfg = load_imgproxy_config_from_settings(request.app.state.settings)
+        except Exception:
+            cfg = None
+        if cfg is not None:
+            try:
+                if runtime.hide_origin_url_in_public_json:
+                    base = str(getattr(request, "base_url", "") or "").rstrip("/")
+                    source_url = f"{base}/i/{image.id}.{image.ext}"
+                else:
+                    source_url = str(image.original_url)
+                imgproxy_url = build_signed_processing_url(cfg, source_url=source_url, extension=str(image.ext))
+            except Exception:
+                imgproxy_url = None
+
         if format == "simple_json":
             return {
                 "ok": True,
@@ -256,6 +273,7 @@ async def random_image(
                     "urls": {
                         "proxy": f"/i/{image.id}.{image.ext}",
                         "origin": origin_url,
+                        "imgproxy": imgproxy_url,
                     },
                     "debug": {
                         "attempts_used": 1,
@@ -289,6 +307,7 @@ async def random_image(
                 "urls": {
                     "proxy": f"/i/{image.id}.{image.ext}",
                     "origin": origin_url,
+                    "imgproxy": imgproxy_url,
                     "legacy_single": f"/{image.illust_id}.{image.ext}",
                     "legacy_multi": f"/{image.illust_id}-{image.page_index + 1}.{image.ext}",
                 },

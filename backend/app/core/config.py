@@ -16,6 +16,12 @@ class Settings:
     pixiv_oauth_client_id: str
     pixiv_oauth_client_secret: str
     pixiv_oauth_hash_secret: str
+    imgproxy_base_url: str
+    imgproxy_key: str
+    imgproxy_salt: str
+    imgproxy_max_dim: int
+    imgproxy_default_options: str
+    imgproxy_url_chunk_size: int
 
     @property
     def is_prod(self) -> bool:
@@ -42,6 +48,23 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     pixiv_oauth_client_secret = _get(env, "PIXIV_OAUTH_CLIENT_SECRET", "")
     pixiv_oauth_hash_secret = _get(env, "PIXIV_OAUTH_HASH_SECRET", "")
 
+    imgproxy_base_url = _get(env, "IMGPROXY_BASE_URL", "")
+    imgproxy_key = _get(env, "IMGPROXY_KEY", "")
+    imgproxy_salt = _get(env, "IMGPROXY_SALT", "")
+    try:
+        imgproxy_max_dim = int(_get(env, "IMGPROXY_MAX_DIM", "2048") or "2048")
+    except Exception:
+        imgproxy_max_dim = 2048
+    imgproxy_max_dim = max(16, min(int(imgproxy_max_dim), 20_000))
+
+    imgproxy_default_options = _get(env, "IMGPROXY_DEFAULT_OPTIONS", "")
+
+    try:
+        imgproxy_url_chunk_size = int(_get(env, "IMGPROXY_URL_CHUNK_SIZE", "16") or "16")
+    except Exception:
+        imgproxy_url_chunk_size = 16
+    imgproxy_url_chunk_size = max(0, min(int(imgproxy_url_chunk_size), 128))
+
     settings = Settings(
         app_env=app_env,
         database_url=database_url,
@@ -52,6 +75,12 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         pixiv_oauth_client_id=pixiv_oauth_client_id,
         pixiv_oauth_client_secret=pixiv_oauth_client_secret,
         pixiv_oauth_hash_secret=pixiv_oauth_hash_secret,
+        imgproxy_base_url=imgproxy_base_url,
+        imgproxy_key=imgproxy_key,
+        imgproxy_salt=imgproxy_salt,
+        imgproxy_max_dim=imgproxy_max_dim,
+        imgproxy_default_options=imgproxy_default_options,
+        imgproxy_url_chunk_size=imgproxy_url_chunk_size,
     )
 
     if settings.is_prod:
@@ -62,6 +91,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             missing.append("FIELD_ENCRYPTION_KEY")
         if not settings.admin_password:
             missing.append("ADMIN_PASSWORD")
+        if settings.imgproxy_base_url and (not settings.imgproxy_key or not settings.imgproxy_salt):
+            missing.append("IMGPROXY_KEY/IMGPROXY_SALT")
         if missing:
             raise ValueError(f"Missing required env vars for prod: {', '.join(missing)}")
 
