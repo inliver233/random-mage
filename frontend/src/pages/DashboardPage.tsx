@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Alert, Button, Card, Col, Row, Skeleton, Space, Typography } from "antd";
 import React from "react";
 import { useNavigate } from "react-router-dom";
@@ -19,6 +19,7 @@ type SettingsResponse = {
 type TokensResponse = { ok: true; items: unknown[]; request_id: string };
 type ProxiesResponse = { ok: true; items: unknown[]; request_id: string };
 type JobsResponse = { ok: true; items: unknown[]; next_cursor: string; request_id: string };
+type CreateHydrationRunResponse = { ok: true; hydration_run_id: string; job_id: string; request_id: string };
 
 function asApiError(err: unknown): ApiError | null {
   return err instanceof ApiError ? err : null;
@@ -30,8 +31,22 @@ function requestIdFromError(err: unknown): string | null {
   return String(apiErr.body.request_id);
 }
 
+function messageFromError(err: unknown): string {
+  if (err instanceof ApiError) return err.message;
+  if (err instanceof Error) return err.message;
+  return "Unknown error";
+}
+
 export function DashboardPage() {
   const navigate = useNavigate();
+
+  const createHydration = useMutation({
+    mutationFn: () =>
+      apiJson<CreateHydrationRunResponse>("/admin/api/hydration-runs", {
+        method: "POST",
+        body: JSON.stringify({}),
+      }),
+  });
 
   const settings = useQuery({
     queryKey: ["admin", "settings"],
@@ -64,28 +79,56 @@ export function DashboardPage() {
         <Button type="primary" onClick={() => navigate("/admin/import")}>
           去导入
         </Button>
+        <Button onClick={() => createHydration.mutate()} loading={createHydration.isPending}>
+          创建补全任务
+        </Button>
       </Space>
+
+      {createHydration.isSuccess ? (
+        <Alert
+          type="success"
+          showIcon
+          message="Hydration run created"
+          description={`hydration_run_id: ${createHydration.data.hydration_run_id}, job_id: ${createHydration.data.job_id}, request_id: ${createHydration.data.request_id}`}
+          style={{ marginBottom: 16 }}
+        />
+      ) : null}
+      {createHydration.isError ? (
+        <Alert
+          type="error"
+          showIcon
+          message="Failed to create hydration run"
+          description={
+            requestIdFromError(createHydration.error)
+              ? `request_id: ${requestIdFromError(createHydration.error)} (${messageFromError(createHydration.error)})`
+              : messageFromError(createHydration.error)
+          }
+          style={{ marginBottom: 16 }}
+        />
+      ) : null}
 
       <Row gutter={[16, 16]}>
         <Col xs={24} md={12} xl={6}>
-        <Card title="Settings">
-          {settings.isLoading ? (
-            <Skeleton active />
-          ) : settings.isError ? (
-            <Alert
-              type="error"
-              showIcon
-              message="Failed to load settings"
-              description={requestIdFromError(settings.error) ? `request_id: ${requestIdFromError(settings.error)}` : ""}
-            />
-          ) : (
-            <Space direction="vertical">
-              <Typography.Text>proxy.enabled: {String(proxyEnabled)}</Typography.Text>
-              <Typography.Text type="secondary">request_id: {settings.data?.request_id}</Typography.Text>
-            </Space>
-          )}
-        </Card>
-      </Col>
+          <Card title="Settings">
+            {settings.isLoading ? (
+              <Skeleton active />
+            ) : settings.isError ? (
+              <Alert
+                type="error"
+                showIcon
+                message="Failed to load settings"
+                description={
+                  requestIdFromError(settings.error) ? `request_id: ${requestIdFromError(settings.error)}` : ""
+                }
+              />
+            ) : (
+              <Space direction="vertical">
+                <Typography.Text>proxy.enabled: {String(proxyEnabled)}</Typography.Text>
+                <Typography.Text type="secondary">request_id: {settings.data?.request_id}</Typography.Text>
+              </Space>
+            )}
+          </Card>
+        </Col>
 
       <Col xs={24} md={12} xl={6}>
         <Card title="Tokens">

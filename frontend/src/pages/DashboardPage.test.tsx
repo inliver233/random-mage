@@ -20,7 +20,7 @@ describe("DashboardPage", () => {
   beforeEach(() => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (input: RequestInfo | URL) => {
+      vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
         const url = String(input);
         if (url.endsWith("/admin/api/settings")) {
           return new Response(
@@ -51,6 +51,12 @@ describe("DashboardPage", () => {
         }
         if (url.includes("/admin/api/jobs?status=failed")) {
           return new Response(JSON.stringify({ ok: true, items: [{}, {}, {}], next_cursor: "", request_id: "req_jobs" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (url.endsWith("/admin/api/hydration-runs")) {
+          return new Response(JSON.stringify({ ok: true, hydration_run_id: "10", job_id: "99", request_id: "req_hyd" }), {
             status: 200,
             headers: { "Content-Type": "application/json" },
           });
@@ -97,5 +103,25 @@ describe("DashboardPage", () => {
     expect(await screen.findByText("Settings")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /去\s*导\s*入/ }));
     expect(await screen.findByText("Import")).toBeInTheDocument();
+  });
+
+  it("creates hydration run", async () => {
+    const qc = makeClient();
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={["/admin"]}>
+          <Routes>
+            <Route path="/admin" element={<DashboardPage />} />
+            <Route path="/admin/import" element={<ImportPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("Settings")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /创\s*建\s*补\s*全\s*任\s*务/ }));
+    expect(await screen.findByText("Hydration run created")).toBeInTheDocument();
+    expect(await screen.findByText(/hydration_run_id:\s*10/)).toBeInTheDocument();
+    expect(await screen.findByText(/request_id:\s*req_hyd/)).toBeInTheDocument();
   });
 });
