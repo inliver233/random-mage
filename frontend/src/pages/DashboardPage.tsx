@@ -79,6 +79,7 @@ export function DashboardPage() {
         <Button type="primary" onClick={() => navigate("/admin/import")}>
           去导入
         </Button>
+        <Button onClick={() => navigate("/admin/tokens")}>去添加 Token</Button>
         <Button onClick={() => createHydration.mutate()} loading={createHydration.isPending}>
           创建补全任务
         </Button>
