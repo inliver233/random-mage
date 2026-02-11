@@ -54,6 +54,39 @@ async def _load_create_json(request: Request) -> dict[str, Any]:
     return {"name": name, "description": description, "enabled": enabled}
 
 
+async def _load_update_json(request: Request) -> dict[str, Any]:
+    try:
+        data = await request.json()
+    except Exception as exc:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid JSON body", status_code=400) from exc
+
+    if not isinstance(data, dict):
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid JSON body", status_code=400)
+
+    out: dict[str, Any] = {}
+
+    if "name" in data:
+        name = str(data.get("name") or "").strip()
+        if not name:
+            raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported name", status_code=400)
+        if len(name) > 100:
+            raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported name", status_code=400)
+        out["name"] = name
+
+    if "description" in data:
+        desc_raw = data.get("description")
+        description = str(desc_raw).strip() if desc_raw is not None else None
+        out["description"] = description if description else None
+
+    if "enabled" in data:
+        out["enabled"] = _parse_bool(data.get("enabled"), default=True)
+
+    if not out:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Missing fields", status_code=400)
+
+    return out
+
+
 @router.get("/proxy-pools")
 async def list_proxy_pools(
     request: Request,
@@ -111,3 +144,39 @@ async def create_proxy_pool(
         await session.refresh(row)
 
     return {"ok": True, "pool_id": str(row.id), "request_id": rid}
+
+
+@router.put("/proxy-pools/{pool_id}")
+async def update_proxy_pool(
+    pool_id: int,
+    request: Request,
+    _claims: dict[str, Any] = Depends(get_admin_claims),
+) -> dict[str, Any]:
+    _ = _claims
+    if pool_id <= 0:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid pool id", status_code=400)
+
+    rid = get_or_create_request_id(request)
+    body = await _load_update_json(request)
+
+    engine = request.app.state.engine
+    Session = create_sessionmaker(engine)
+    async with Session() as session:
+        row = await session.get(ProxyPool, pool_id)
+        if row is None:
+            raise ApiError(code=ErrorCode.NOT_FOUND, message="Proxy pool not found", status_code=404)
+
+        if "name" in body:
+            row.name = str(body["name"])
+        if "description" in body:
+            row.description = body["description"]
+        if "enabled" in body:
+            row.enabled = 1 if bool(body["enabled"]) else 0
+
+        try:
+            await session.commit()
+        except IntegrityError as exc:
+            await session.rollback()
+            raise ApiError(code=ErrorCode.BAD_REQUEST, message="Proxy pool name exists", status_code=400) from exc
+
+    return {"ok": True, "pool_id": str(pool_id), "request_id": rid}
