@@ -13,6 +13,7 @@ from app.core.request_id import get_or_create_request_id
 from app.core.time import iso_utc_ms
 from app.db.models.proxy_endpoints import ProxyEndpoint
 from app.db.session import create_sessionmaker, with_sqlite_busy_retry
+from app.easy_proxies.client import EasyProxiesError, easy_proxies_auth, easy_proxies_export
 
 router = APIRouter()
 
@@ -67,6 +68,13 @@ def _parse_conflict_policy(value: Any) -> str:
     return v
 
 
+def _parse_easy_conflict_policy(value: Any) -> str:
+    v = str(value or "").strip().lower() or "skip_non_easy_proxies"
+    if v not in {"skip_non_easy_proxies", "skip", "overwrite"}:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported conflict_policy", status_code=400)
+    return v
+
+
 async def _load_import_json(request: Request) -> dict[str, Any]:
     try:
         data = await request.json()
@@ -84,6 +92,26 @@ async def _load_import_json(request: Request) -> dict[str, Any]:
     conflict_policy = _parse_conflict_policy(data.get("conflict_policy"))
 
     return {"text": text, "source": source, "conflict_policy": conflict_policy}
+
+
+async def _load_easy_import_json(request: Request) -> dict[str, Any]:
+    try:
+        data = await request.json()
+    except Exception as exc:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid JSON body", status_code=400) from exc
+
+    if not isinstance(data, dict):
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid JSON body", status_code=400)
+
+    base_url = str(data.get("base_url") or "").strip()
+    password = str(data.get("password") or "").strip()
+    if not base_url:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Missing base_url", status_code=400)
+    if not password:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Missing password", status_code=400)
+
+    conflict_policy = _parse_easy_conflict_policy(data.get("conflict_policy"))
+    return {"base_url": base_url, "password": password, "conflict_policy": conflict_policy}
 
 
 @router.post("/proxies/endpoints/import")
@@ -173,6 +201,122 @@ async def import_proxy_endpoints(
                     updated += 1
                 else:
                     skipped += 1
+
+            await session.commit()
+
+    await with_sqlite_busy_retry(_op)
+
+    return {
+        "ok": True,
+        "created": created,
+        "updated": updated,
+        "skipped": skipped,
+        "errors": errors[:200],
+        "request_id": rid,
+    }
+
+
+@router.post("/proxies/easy-proxies/import")
+async def import_easy_proxies(
+    request: Request,
+    _claims: dict[str, Any] = Depends(get_admin_claims),
+) -> dict[str, Any]:
+    _ = _claims
+    rid = get_or_create_request_id(request)
+    body = await _load_easy_import_json(request)
+
+    settings = request.app.state.settings
+    try:
+        encryptor = FieldEncryptor.from_key(settings.field_encryption_key)
+    except Exception as exc:
+        raise ApiError(code=ErrorCode.INTERNAL_ERROR, message="Encryption not configured", status_code=500) from exc
+
+    base_url = str(body["base_url"])
+    password = str(body["password"])
+    conflict_policy = str(body["conflict_policy"])
+
+    transport = getattr(request.app.state, "httpx_transport", None)
+
+    try:
+        auth = await easy_proxies_auth(base_url=base_url, password=password, transport=transport)
+        uris = await easy_proxies_export(base_url=base_url, bearer_token=auth.token, transport=transport)
+    except EasyProxiesError as exc:
+        raise ApiError(code=ErrorCode.INTERNAL_ERROR, message="easy_proxies import failed", status_code=502) from exc
+    except Exception as exc:
+        raise ApiError(code=ErrorCode.INTERNAL_ERROR, message="easy_proxies import failed", status_code=502) from exc
+
+    created = 0
+    updated = 0
+    skipped = 0
+    errors: list[dict[str, Any]] = []
+
+    now = iso_utc_ms()
+
+    engine = request.app.state.engine
+    Session = create_sessionmaker(engine)
+
+    async def _op() -> None:
+        nonlocal created, updated, skipped, errors
+        async with Session() as session:
+            for uri in uris:
+                uri = (uri or "").strip()
+                if not uri:
+                    continue
+                try:
+                    parsed = parse_proxy_uri(uri)
+                except Exception:
+                    errors.append({"code": "invalid_proxy_uri", "message": "invalid_proxy_uri"})
+                    continue
+
+                username = (parsed.username or "").strip()
+                password_v = parsed.password
+                password_enc = encryptor.encrypt_text(password_v) if password_v else ""
+
+                existing = (
+                    (
+                        await session.execute(
+                            sa.select(ProxyEndpoint).where(
+                                ProxyEndpoint.scheme == parsed.scheme,
+                                ProxyEndpoint.host == parsed.host,
+                                ProxyEndpoint.port == int(parsed.port),
+                                ProxyEndpoint.username == username,
+                            )
+                        )
+                    )
+                    .scalars()
+                    .first()
+                )
+
+                if existing is None:
+                    session.add(
+                        ProxyEndpoint(
+                            scheme=parsed.scheme,
+                            host=parsed.host,
+                            port=int(parsed.port),
+                            username=username,
+                            password_enc=password_enc,
+                            enabled=1,
+                            source="easy_proxies",
+                            source_ref=base_url,
+                            updated_at=now,
+                        )
+                    )
+                    created += 1
+                    continue
+
+                if conflict_policy == "skip_non_easy_proxies" and (existing.source or "") != "easy_proxies":
+                    skipped += 1
+                    continue
+                if conflict_policy == "skip":
+                    skipped += 1
+                    continue
+
+                existing.password_enc = password_enc
+                existing.enabled = 1
+                existing.source = "easy_proxies"
+                existing.source_ref = base_url
+                existing.updated_at = now
+                updated += 1
 
             await session.commit()
 
