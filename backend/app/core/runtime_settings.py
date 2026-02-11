@@ -30,11 +30,30 @@ def _as_bool(value: Any) -> bool | None:
     return None
 
 
+def _as_str_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        v = item.strip()
+        if not v or v in seen:
+            continue
+        seen.add(v)
+        out.append(v)
+    return out
+
+
 @dataclass(frozen=True, slots=True)
 class RuntimeConfig:
     proxy_enabled: bool
     proxy_fail_closed: bool
     proxy_route_mode: str
+    proxy_allowlist_domains: list[str]
+    proxy_route_pools: dict[str, int]
+    proxy_default_pool_id: int | None
     random_defaults: dict[str, Any]
     hide_origin_url_in_public_json: bool
     rate_limit: dict[str, Any]
@@ -45,6 +64,9 @@ class RuntimeConfig:
             proxy_enabled=False,
             proxy_fail_closed=True,
             proxy_route_mode="pixiv_only",
+            proxy_allowlist_domains=[],
+            proxy_route_pools={},
+            proxy_default_pool_id=None,
             random_defaults={},
             hide_origin_url_in_public_json=True,
             rate_limit={},
@@ -81,6 +103,32 @@ def runtime_config_from_values(values: dict[str, Any]) -> RuntimeConfig:
         if candidate in {"pixiv_only", "all", "allowlist", "off"}:
             proxy_route_mode = candidate
 
+    proxy_allowlist_domains = _as_str_list(values.get("proxy.allowlist_domains")) or defaults.proxy_allowlist_domains
+
+    proxy_route_pools_raw = values.get("proxy.route_pools")
+    proxy_route_pools: dict[str, int] = {}
+    if isinstance(proxy_route_pools_raw, dict):
+        for k, v in proxy_route_pools_raw.items():
+            key = str(k or "").strip().lower().strip(".")
+            if not key or len(key) > 200:
+                continue
+            try:
+                pool_id = int(v)
+            except Exception:
+                continue
+            if pool_id <= 0:
+                continue
+            proxy_route_pools[key] = pool_id
+
+    proxy_default_pool_id: int | None = None
+    default_pool_raw = values.get("proxy.default_pool_id")
+    if default_pool_raw is not None:
+        try:
+            candidate = int(default_pool_raw)
+        except Exception:
+            candidate = 0
+        proxy_default_pool_id = candidate if candidate > 0 else None
+
     random_defaults_raw = values.get("random.defaults")
     random_defaults = defaults.random_defaults
     if isinstance(random_defaults_raw, dict):
@@ -98,6 +146,9 @@ def runtime_config_from_values(values: dict[str, Any]) -> RuntimeConfig:
         proxy_enabled=proxy_enabled if proxy_enabled is not None else defaults.proxy_enabled,
         proxy_fail_closed=proxy_fail_closed if proxy_fail_closed is not None else defaults.proxy_fail_closed,
         proxy_route_mode=proxy_route_mode,
+        proxy_allowlist_domains=proxy_allowlist_domains,
+        proxy_route_pools=proxy_route_pools,
+        proxy_default_pool_id=proxy_default_pool_id,
         random_defaults=random_defaults,
         hide_origin_url_in_public_json=hide_origin_url
         if hide_origin_url is not None

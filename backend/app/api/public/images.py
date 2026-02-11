@@ -10,6 +10,8 @@ from app.core.errors import ApiError, ErrorCode
 from app.core.http_stream import stream_url
 from app.core.pixiv_urls import ALLOWED_IMAGE_EXTS
 from app.core.request_id import get_or_create_request_id, set_request_id_header, set_request_id_on_state
+from app.core.runtime_settings import load_runtime_config
+from app.core.proxy_routing import select_proxy_uri_for_url
 from app.db.images_get import get_image_by_id
 from app.db.images_list import list_images as db_list_images
 from app.db.session import create_sessionmaker
@@ -247,10 +249,22 @@ async def proxy_image(
         if image is None or (image.ext or "").lower() != ext:
             raise ApiError(code=ErrorCode.NOT_FOUND, message="Image not found", status_code=404)
 
+    runtime = await load_runtime_config(engine)
+    proxy_uri = None
+    picked = await select_proxy_uri_for_url(
+        engine,
+        request.app.state.settings,
+        runtime,
+        url=str(image.original_url),
+    )
+    if picked is not None:
+        proxy_uri = picked.uri
+
     transport = getattr(request.app.state, "httpx_transport", None)
     return await stream_url(
         image.original_url,
         transport=transport,
+        proxy=proxy_uri,
         cache_control="public, max-age=31536000, immutable",
         range_header=request.headers.get("Range"),
     )

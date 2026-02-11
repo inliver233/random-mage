@@ -1,0 +1,257 @@
+from __future__ import annotations
+
+import random
+from dataclasses import dataclass
+from urllib.parse import urlparse
+from urllib.parse import quote
+
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+from app.core.config import Settings
+from app.core.crypto import FieldEncryptor
+from app.core.errors import ApiError, ErrorCode
+from app.core.runtime_settings import RuntimeConfig
+from app.core.time import iso_utc_ms
+from app.db.session import with_sqlite_busy_retry
+
+
+_PIXIV_HOST_SUFFIXES = (
+    "pixiv.net",
+    "pximg.net",
+    "secure.pixiv.net",
+)
+
+
+def _normalize_host(host: str) -> str:
+    return (host or "").strip().lower().strip(".")
+
+
+def host_from_url(url: str) -> str | None:
+    url = (url or "").strip()
+    if not url:
+        return None
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return None
+    host = _normalize_host(parsed.hostname or "")
+    return host or None
+
+
+def _suffix_match(*, host: str, suffix: str) -> bool:
+    host = _normalize_host(host)
+    suffix = _normalize_host(suffix)
+    if not host or not suffix:
+        return False
+    return host == suffix or host.endswith("." + suffix)
+
+
+def should_use_proxy_for_host(runtime: RuntimeConfig, *, host: str) -> bool:
+    if not bool(runtime.proxy_enabled):
+        return False
+
+    host_n = _normalize_host(host)
+    if not host_n:
+        return False
+
+    mode = (runtime.proxy_route_mode or "").strip().lower()
+    if mode in {"off"}:
+        return False
+    if mode == "all":
+        return True
+    if mode == "allowlist":
+        return any(_suffix_match(host=host_n, suffix=d) for d in (runtime.proxy_allowlist_domains or []))
+    if mode == "pixiv_only":
+        return any(_suffix_match(host=host_n, suffix=s) for s in _PIXIV_HOST_SUFFIXES)
+    return False
+
+
+def resolve_pool_id_for_host(runtime: RuntimeConfig, *, host: str) -> int | None:
+    host_n = _normalize_host(host)
+    if not host_n:
+        return None
+
+    best_len = -1
+    best: int | None = None
+    for suffix, pool_id in (runtime.proxy_route_pools or {}).items():
+        suf = _normalize_host(str(suffix))
+        if not suf:
+            continue
+        if not _suffix_match(host=host_n, suffix=suf):
+            continue
+        if len(suf) > best_len:
+            best_len = len(suf)
+            best = int(pool_id)
+
+    if best is not None and int(best) > 0:
+        return int(best)
+
+    if runtime.proxy_default_pool_id is not None and int(runtime.proxy_default_pool_id) > 0:
+        return int(runtime.proxy_default_pool_id)
+
+    return None
+
+
+def _weighted_choice(items: list[tuple[int, int]]) -> int | None:
+    if not items:
+        return None
+    total = sum(max(0, int(w)) for _pid, w in items)
+    if total <= 0:
+        items2 = [pid for pid, _w in items]
+        return int(random.choice(items2)) if items2 else None
+    r = random.random() * total
+    for pid, w in items:
+        w_i = max(0, int(w))
+        if w_i <= 0:
+            continue
+        if r < w_i:
+            return int(pid)
+        r -= w_i
+    return int(items[-1][0])
+
+
+@dataclass(frozen=True, slots=True)
+class ProxyUri:
+    uri: str
+    endpoint_id: int
+    pool_id: int
+
+
+async def _first_enabled_pool_id(engine: AsyncEngine) -> int | None:
+    sql = "SELECT id FROM proxy_pools WHERE enabled=1 ORDER BY id ASC LIMIT 1;"
+
+    async def _op() -> int | None:
+        async with engine.connect() as conn:
+            result = await conn.exec_driver_sql(sql)
+            value = result.scalar_one_or_none()
+            return int(value) if value is not None else None
+
+    return await with_sqlite_busy_retry(_op)
+
+
+async def _pick_endpoint_in_pool(engine: AsyncEngine, *, pool_id: int, now_iso: str) -> tuple[int, str, str, int, str, str] | None:
+    sql = """
+SELECT pe.id, pe.scheme, pe.host, pe.port, pe.username, pe.password_enc, ppe.weight
+FROM proxy_pools pp
+JOIN proxy_pool_endpoints ppe
+  ON ppe.pool_id = pp.id AND ppe.enabled = 1
+JOIN proxy_endpoints pe
+  ON pe.id = ppe.endpoint_id AND pe.enabled = 1
+WHERE pp.id = :pool_id AND pp.enabled = 1
+  AND (pe.blacklisted_until IS NULL OR pe.blacklisted_until <= :now)
+ORDER BY pe.id ASC;
+""".strip()
+
+    async def _op() -> tuple[int, str, str, int, str, str] | None:
+        async with engine.connect() as conn:
+            result = await conn.exec_driver_sql(sql, {"pool_id": int(pool_id), "now": now_iso})
+            rows = result.fetchall()
+        weighted: list[tuple[int, int]] = [(int(r[0]), int(r[6] or 0)) for r in rows]
+        chosen_id = _weighted_choice(weighted)
+        if chosen_id is None:
+            return None
+        for r in rows:
+            if int(r[0]) == int(chosen_id):
+                return (
+                    int(r[0]),
+                    str(r[1]),
+                    str(r[2]),
+                    int(r[3]),
+                    str(r[4] or ""),
+                    str(r[5] or ""),
+                )
+        return None
+
+    return await with_sqlite_busy_retry(_op)
+
+
+def _build_proxy_uri(
+    encryptor: FieldEncryptor | None,
+    *,
+    scheme: str,
+    host: str,
+    port: int,
+    username: str,
+    password_enc: str,
+) -> str:
+    scheme = (scheme or "").strip().lower()
+    host = (host or "").strip()
+    username = (username or "").strip()
+    password_enc = (password_enc or "").strip()
+    if not scheme or not host or int(port) <= 0:
+        raise ValueError("invalid proxy endpoint")
+
+    password = ""
+    if password_enc:
+        if encryptor is None:
+            raise ValueError("FIELD_ENCRYPTION_KEY is required to decrypt proxy password")
+        password = encryptor.decrypt_text(password_enc) if password_enc else ""
+
+    host_part = host
+    if ":" in host_part and not host_part.startswith("["):
+        host_part = f"[{host_part}]"
+
+    auth = ""
+    if username:
+        user_q = quote(username, safe="")
+        pass_q = quote(password or "", safe="")
+        auth = f"{user_q}:{pass_q}@"
+
+    return f"{scheme}://{auth}{host_part}:{int(port)}"
+
+
+async def select_proxy_uri_for_url(
+    engine: AsyncEngine,
+    settings: Settings,
+    runtime: RuntimeConfig,
+    *,
+    url: str,
+    now_iso: str | None = None,
+) -> ProxyUri | None:
+    host = host_from_url(url)
+    if host is None:
+        return None
+
+    if not should_use_proxy_for_host(runtime, host=host):
+        return None
+
+    pool_id = resolve_pool_id_for_host(runtime, host=host)
+    if pool_id is None:
+        pool_id = await _first_enabled_pool_id(engine)
+
+    if pool_id is None:
+        if bool(runtime.proxy_fail_closed):
+            raise ApiError(code=ErrorCode.PROXY_REQUIRED, message="Proxy required but no proxy pool configured", status_code=502)
+        return None
+
+    now_iso = now_iso or iso_utc_ms()
+
+    picked = await _pick_endpoint_in_pool(engine, pool_id=int(pool_id), now_iso=now_iso)
+    if picked is None:
+        if bool(runtime.proxy_fail_closed):
+            raise ApiError(code=ErrorCode.PROXY_REQUIRED, message="Proxy required but no healthy proxy available", status_code=502)
+        return None
+
+    endpoint_id, scheme, host_v, port, username, password_enc = picked
+    encryptor = None
+    if password_enc:
+        try:
+            encryptor = FieldEncryptor.from_key(settings.field_encryption_key)
+        except Exception as exc:
+            raise ApiError(code=ErrorCode.INTERNAL_ERROR, message="Encryption not configured", status_code=500) from exc
+
+    try:
+        uri = _build_proxy_uri(
+            encryptor,
+            scheme=scheme,
+            host=host_v,
+            port=int(port),
+            username=username,
+            password_enc=password_enc,
+        )
+    except ApiError:
+        raise
+    except Exception as exc:
+        raise ApiError(code=ErrorCode.INTERNAL_ERROR, message="Invalid proxy endpoint", status_code=500) from exc
+
+    return ProxyUri(uri=uri, endpoint_id=int(endpoint_id), pool_id=int(pool_id))

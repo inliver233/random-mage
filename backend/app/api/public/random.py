@@ -11,6 +11,7 @@ from fastapi.responses import RedirectResponse
 from app.core.errors import ApiError, ErrorCode
 from app.core.http_stream import stream_url
 from app.core.imgproxy import build_signed_processing_url, load_imgproxy_config_from_settings
+from app.core.proxy_routing import select_proxy_uri_for_url
 from app.core.runtime_settings import load_runtime_config
 from app.core.time import iso_utc_ms
 from app.db.images_mark import mark_image_failure, mark_image_ok
@@ -321,6 +322,7 @@ async def random_image(
     tried_ids: set[int] = set()
     last_error: ApiError | None = None
     attempts_i = int(attempts)
+    runtime_stream = await load_runtime_config(engine)
 
     for _ in range(attempts_i):
         async with Session() as session:
@@ -338,10 +340,20 @@ async def random_image(
             needs_hydrate = _needs_opportunistic_hydrate(image)
 
         transport = getattr(request.app.state, "httpx_transport", None)
+        proxy_uri = None
+        picked = await select_proxy_uri_for_url(
+            engine,
+            request.app.state.settings,
+            runtime_stream,
+            url=origin_url,
+        )
+        if picked is not None:
+            proxy_uri = picked.uri
         try:
             resp = await stream_url(
                 origin_url,
                 transport=transport,
+                proxy=proxy_uri,
                 cache_control="no-store",
                 range_header=request.headers.get("Range"),
             )

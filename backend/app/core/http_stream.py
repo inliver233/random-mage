@@ -15,6 +15,7 @@ async def stream_url(
     url: str,
     *,
     transport: httpx.BaseTransport | None = None,
+    proxy: str | None = None,
     cache_control: str,
     referer: str = PIXIV_REFERER,
     timeout_s: float = 30.0,
@@ -22,6 +23,7 @@ async def stream_url(
 ) -> StreamingResponse:
     client = httpx.AsyncClient(
         transport=transport,
+        proxy=proxy,
         follow_redirects=True,
         timeout=httpx.Timeout(timeout_s, connect=10.0),
     )

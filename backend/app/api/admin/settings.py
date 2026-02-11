@@ -81,8 +81,6 @@ async def get_settings(
     values = await fetch_runtime_settings(engine)
     runtime = runtime_config_from_values(values)
 
-    allowlist_domains = _as_str_list(values.get("proxy.allowlist_domains"))
-
     random_defaults = dict(_DEFAULT_SETTINGS["random"])
     if isinstance(runtime.random_defaults, dict):
         for k in list(random_defaults.keys()):
@@ -96,7 +94,9 @@ async def get_settings(
                 "enabled": bool(runtime.proxy_enabled),
                 "fail_closed": bool(runtime.proxy_fail_closed),
                 "route_mode": runtime.proxy_route_mode,
-                "allowlist_domains": allowlist_domains,
+                "allowlist_domains": list(runtime.proxy_allowlist_domains),
+                "default_pool_id": str(runtime.proxy_default_pool_id) if runtime.proxy_default_pool_id is not None else "",
+                "route_pools": {k: str(v) for k, v in runtime.proxy_route_pools.items()},
             },
             "random": random_defaults,
             "security": {"hide_origin_url_in_public_json": bool(runtime.hide_origin_url_in_public_json)},
@@ -151,6 +151,46 @@ async def update_settings(
             if len(domains) > 200 or any(len(d) > 200 for d in domains):
                 raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid proxy.allowlist_domains", status_code=400)
             updates.append(("proxy.allowlist_domains", domains))
+
+        if "default_pool_id" in proxy:
+            raw = proxy.get("default_pool_id")
+            if raw is None or raw == "":
+                updates.append(("proxy.default_pool_id", None))
+            else:
+                try:
+                    pool_id = int(raw)
+                except Exception as exc:
+                    raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid proxy.default_pool_id", status_code=400) from exc
+                if pool_id <= 0:
+                    raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid proxy.default_pool_id", status_code=400)
+                updates.append(("proxy.default_pool_id", int(pool_id)))
+
+        if "route_pools" in proxy:
+            raw = proxy.get("route_pools")
+            if raw is None:
+                updates.append(("proxy.route_pools", {}))
+            else:
+                if not isinstance(raw, dict):
+                    raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid proxy.route_pools", status_code=400)
+                route_pools: dict[str, int] = {}
+                if len(raw) > 200:
+                    raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid proxy.route_pools", status_code=400)
+                for k, v in raw.items():
+                    key = str(k or "").strip().lower().strip(".")
+                    if not key or len(key) > 200:
+                        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid proxy.route_pools", status_code=400)
+                    try:
+                        pool_id = int(v)
+                    except Exception as exc:
+                        raise ApiError(
+                            code=ErrorCode.BAD_REQUEST,
+                            message="Invalid proxy.route_pools",
+                            status_code=400,
+                        ) from exc
+                    if pool_id <= 0:
+                        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid proxy.route_pools", status_code=400)
+                    route_pools[key] = int(pool_id)
+                updates.append(("proxy.route_pools", route_pools))
 
     random = body.get("random")
     if random is not None:
