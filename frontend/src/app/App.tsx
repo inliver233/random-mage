@@ -2,8 +2,9 @@ import { ConfigProvider, Layout, Typography } from "antd";
 import React from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
-import { PlaceholderPage } from "../pages/PlaceholderPage";
+import { DashboardPage } from "../pages/DashboardPage";
 import { LoginPage } from "../pages/LoginPage";
+import { PlaceholderPage } from "../pages/PlaceholderPage";
 
 export function App() {
   return (
@@ -20,7 +21,7 @@ export function App() {
                   <Typography.Title level={3} style={{ marginTop: 0 }}>
                     Random Mage Admin
                   </Typography.Title>
-                  <PlaceholderPage title="Dashboard" />
+                  <DashboardPage />
                 </Layout.Content>
               </Layout>
             }
