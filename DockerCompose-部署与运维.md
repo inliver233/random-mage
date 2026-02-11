@@ -191,6 +191,31 @@ PY
 3) 使用旧代码/旧镜像启动：
    - `docker compose -f deploy/docker-compose.yml up -d --build`
 
+### 5.4 request_logs 清理（可选）
+
+`request_logs` 用于请求观测，长期运行可能增长较快。建议在低峰期按需清理。
+
+管理端提供一个维护接口（需要 admin 鉴权）：
+- `POST /admin/api/maintenance/request-logs/cleanup`
+
+示例（dry-run）：
+```bash
+curl -X POST http://127.0.0.1:8000/admin/api/maintenance/request-logs/cleanup \
+  -H "Authorization: Bearer <admin_jwt>" \
+  -H "Content-Type: application/json" \
+  -d '{"keep_days":30,"max_delete_rows":50000,"chunk_size":1000,"dry_run":true}'
+```
+
+执行清理：
+```bash
+curl -X POST http://127.0.0.1:8000/admin/api/maintenance/request-logs/cleanup \
+  -H "Authorization: Bearer <admin_jwt>" \
+  -H "Content-Type: application/json" \
+  -d '{"keep_days":30,"max_delete_rows":50000,"chunk_size":1000}'
+```
+
+> 说明：删除记录不会立刻缩小 SQLite 文件体积；如需收缩文件体积，建议通过“备份-恢复”方式（见 5.1），或在停机窗口执行 `VACUUM`。
+
 ---
 
 ## 6. 生产反代建议（强烈建议）

@@ -8,6 +8,7 @@ from app.api.admin.bindings import router as bindings_router
 from app.api.admin.hydration_runs import router as hydration_runs_router
 from app.api.admin.imports import router as imports_router
 from app.api.admin.jobs import router as jobs_router
+from app.api.admin.maintenance import router as maintenance_router
 from app.api.admin.proxies import router as proxies_router
 from app.api.admin.proxy_pools import router as proxy_pools_router
 from app.api.admin.settings import router as settings_router
@@ -20,6 +21,7 @@ router.include_router(bindings_router)
 router.include_router(hydration_runs_router)
 router.include_router(imports_router)
 router.include_router(jobs_router)
+router.include_router(maintenance_router)
 router.include_router(proxies_router)
 router.include_router(proxy_pools_router)
 router.include_router(settings_router)
