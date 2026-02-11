@@ -262,3 +262,37 @@ async def test_refresh_token(
         await session.commit()
 
     return {"ok": True, "expires_in": int(token.expires_in), "user_id": token.user_id, "request_id": rid}
+
+
+@router.post("/tokens/{token_id}/reset-failures")
+async def reset_failures(
+    token_id: int,
+    request: Request,
+    _claims: dict[str, Any] = Depends(get_admin_claims),
+) -> dict[str, Any]:
+    _ = _claims
+    if token_id <= 0:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid token id", status_code=400)
+
+    rid = get_or_create_request_id(request)
+
+    now = iso_utc_ms()
+
+    engine = request.app.state.engine
+    Session = create_sessionmaker(engine)
+
+    async with Session() as session:
+        row = await session.get(PixivToken, token_id)
+        if row is None:
+            raise ApiError(code=ErrorCode.NOT_FOUND, message="Token not found", status_code=404)
+
+        row.error_count = 0
+        row.backoff_until = None
+        row.last_fail_at = None
+        row.last_error_code = None
+        row.last_error_msg = None
+        row.updated_at = now
+
+        await session.commit()
+
+    return {"ok": True, "token_id": str(token_id), "request_id": rid}
