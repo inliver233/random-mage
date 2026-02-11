@@ -9,6 +9,7 @@ from app.api.metrics import router as metrics_router
 from app.api.public.healthz import router as healthz_router
 from app.api.public.authors import router as authors_router
 from app.api.public.images import router as images_router
+from app.api.public.legacy import router as legacy_router
 from app.api.public.random import router as random_router
 from app.api.public.tags import router as tags_router
 from app.api.public.version import router as version_router
@@ -78,6 +79,7 @@ def create_app() -> FastAPI:
     app.include_router(healthz_router)
     app.include_router(authors_router)
     app.include_router(images_router)
+    app.include_router(legacy_router)
     app.include_router(random_router)
     app.include_router(tags_router)
     app.include_router(version_router)
