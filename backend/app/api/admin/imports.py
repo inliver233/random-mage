@@ -75,8 +75,8 @@ def _parse_import_text(text: str) -> tuple[int, list[tuple[str, Any]], int, list
                 ImportErrorItem(
                     line=line_no,
                     url=url,
-                    code="unsupported_url",
-                    message=str(exc) or "unsupported_url",
+                    code=ErrorCode.UNSUPPORTED_URL.value,
+                    message=str(exc) or ErrorCode.UNSUPPORTED_URL.value,
                 )
             )
             continue
