@@ -5,6 +5,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from app.core.metrics import JOBS_CLAIM_TOTAL
 from app.db.session import with_sqlite_busy_retry
 
 DEFAULT_LOCK_TTL_S = 300
@@ -60,7 +61,10 @@ RETURNING *;
             row = result.mappings().first()
             return dict(row) if row else None
 
-    return await with_sqlite_busy_retry(_op)
+    job = await with_sqlite_busy_retry(_op)
+    if job is not None:
+        JOBS_CLAIM_TOTAL.inc()
+    return job
 
 
 async def renew_job_lock(
@@ -89,4 +93,3 @@ WHERE id=:id AND locked_by=:worker_id AND status='running';
             return (result.rowcount or 0) == 1
 
     return await with_sqlite_busy_retry(_op)
-

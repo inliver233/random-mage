@@ -63,6 +63,11 @@ UPSTREAM_STREAM_ERRORS_TOTAL = Counter(
     "Total upstream stream failures (stream_url).",
 )
 
+JOBS_CLAIM_TOTAL = Counter(
+    "new_pixiv_jobs_claim_total",
+    "Total jobs claimed by workers.",
+)
+
 JOBS_STATUS_COUNT = Gauge(
     "new_pixiv_jobs_status_count",
     "Current jobs count by status (from SQLite).",
@@ -91,6 +96,7 @@ def _init_labelsets() -> None:
         RANDOM_REQUESTS_TOTAL.labels(result=result).inc(0)
     RANDOM_NO_MATCH_TOTAL.inc(0)
     UPSTREAM_STREAM_ERRORS_TOTAL.inc(0)
+    JOBS_CLAIM_TOTAL.inc(0)
     for status in JOB_STATUSES:
         JOBS_STATUS_COUNT.labels(status=status).set(0)
     for state in PROXY_STATES:
