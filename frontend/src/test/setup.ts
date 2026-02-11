@@ -15,3 +15,9 @@ if (!window.matchMedia) {
     }),
   });
 }
+
+const originalGetComputedStyle = window.getComputedStyle;
+window.getComputedStyle = (elt: Element, pseudoElt?: string | null) => {
+  if (pseudoElt) return originalGetComputedStyle(elt);
+  return originalGetComputedStyle(elt);
+};
