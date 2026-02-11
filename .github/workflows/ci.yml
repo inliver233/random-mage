@@ -58,3 +58,11 @@ jobs:
       - name: Tests
         run: npm test
         working-directory: frontend
+
+  compose-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate docker compose config
+        run: docker compose -f deploy/docker-compose.yml config > /dev/null
