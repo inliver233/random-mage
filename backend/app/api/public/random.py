@@ -16,6 +16,7 @@ from app.db.images_mark import mark_image_failure, mark_image_ok
 from app.db.tags_get import get_tag_names_for_image
 from app.db.random_pick import pick_random_image
 from app.db.session import create_sessionmaker
+from app.jobs.enqueue import enqueue_opportunistic_hydrate_metadata
 
 router = APIRouter()
 
@@ -202,6 +203,15 @@ async def random_image(
 
     rng = random.Random(seed_norm) if seed_norm else random
 
+    def _needs_opportunistic_hydrate(image: Any) -> bool:
+        return (
+            getattr(image, "width", None) is None
+            or getattr(image, "height", None) is None
+            or getattr(image, "x_restrict", None) is None
+            or getattr(image, "ai_type", None) is None
+            or getattr(image, "user_id", None) is None
+        )
+
     if format in {"json", "simple_json"} or (format == "image" and redirect == 1):
         tags: list[str] = []
         async with Session() as session:
@@ -210,6 +220,12 @@ async def random_image(
                 raise _no_match_error()
             if format == "json":
                 tags = await get_tag_names_for_image(session, image_id=image.id)
+
+        if _needs_opportunistic_hydrate(image):
+            try:
+                await enqueue_opportunistic_hydrate_metadata(engine, illust_id=int(image.illust_id), reason="random")
+            except Exception:
+                pass
 
         if format == "image" and redirect == 1:
             return RedirectResponse(
@@ -299,6 +315,8 @@ async def random_image(
                 break
             image_id = int(image.id)
             origin_url = str(image.original_url)
+            illust_id_for_hydrate = int(image.illust_id)
+            needs_hydrate = _needs_opportunistic_hydrate(image)
 
         transport = getattr(request.app.state, "httpx_transport", None)
         try:
@@ -309,6 +327,15 @@ async def random_image(
                 range_header=request.headers.get("Range"),
             )
             await mark_image_ok(engine, image_id=image_id, now=iso_utc_ms())
+            if needs_hydrate:
+                try:
+                    await enqueue_opportunistic_hydrate_metadata(
+                        engine,
+                        illust_id=illust_id_for_hydrate,
+                        reason="random",
+                    )
+                except Exception:
+                    pass
             return resp
         except ApiError as exc:
             if exc.code in {
