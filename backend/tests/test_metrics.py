@@ -73,6 +73,7 @@ def test_metrics_exposes_random_jobs_and_proxy_metrics(tmp_path: Path, monkeypat
         assert "new_pixiv_jobs_failed_total" in text
         assert "new_pixiv_jobs_status_count" in text
         assert "new_pixiv_proxy_endpoints_state_count" in text
+        assert "new_pixiv_proxy_probe_latency_ms" in text
 
         assert re.search(r'new_pixiv_jobs_status_count\{status=\"pending\"\}\s+1(\.0+)?\b', text)
         assert re.search(r'new_pixiv_proxy_endpoints_state_count\{state=\"enabled\"\}\s+1(\.0+)?\b', text)

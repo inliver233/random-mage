@@ -85,6 +85,23 @@ PROXY_ENDPOINTS_STATE_COUNT = Gauge(
     ["state"],
 )
 
+PROXY_PROBE_LATENCY_MS = Histogram(
+    "new_pixiv_proxy_probe_latency_ms",
+    "Proxy probe latency (ms).",
+    buckets=(
+        10.0,
+        25.0,
+        50.0,
+        100.0,
+        250.0,
+        500.0,
+        1000.0,
+        2000.0,
+        5000.0,
+        10000.0,
+    ),
+)
+
 METRICS_SCRAPE_ERRORS_TOTAL = Counter(
     "new_pixiv_metrics_scrape_errors_total",
     "Total /metrics scrape errors while querying backing dependencies.",

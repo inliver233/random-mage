@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.core.config import load_settings
 from app.core.crypto import FieldEncryptor
+from app.core.metrics import PROXY_PROBE_LATENCY_MS
 from app.core.redact import redact_text
 from app.core.time import iso_utc_ms
 from app.db.models.proxy_endpoints import ProxyEndpoint
@@ -200,6 +201,9 @@ def build_proxy_probe_handler(
         probed = await asyncio.gather(*tasks) if tasks else []
 
         results = list(immediate_results) + list(probed)
+        for r in results:
+            if r.latency_ms is not None and float(r.latency_ms) >= 0:
+                PROXY_PROBE_LATENCY_MS.observe(float(r.latency_ms))
         now_dt = datetime.now(timezone.utc)
         now_iso = iso_utc_ms(now_dt)
         blacklist_until_iso = iso_utc_ms(now_dt + timedelta(seconds=int(BLACKLIST_TTL_S)))
@@ -249,4 +253,3 @@ def build_proxy_probe_handler(
         await with_sqlite_busy_retry(_op)
 
     return _handler
-
