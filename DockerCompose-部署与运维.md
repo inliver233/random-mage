@@ -19,6 +19,27 @@
 
 ## 2. 目录与卷（强烈建议）
 
+### 2.1 本仓库默认布局（开发/自托管示例）
+
+> 下面的路径以仓库根目录为基准（即 `new-pixiv-api实现/`）。
+
+```text
+deploy/docker-compose.yml
+deploy/.env.example
+data/app.db
+```
+
+运行/验证（本仓库）：
+
+```bash
+docker compose -f deploy/docker-compose.yml config
+docker compose -f deploy/docker-compose.yml up -d --build
+```
+
+> 说明：`deploy/docker-compose.yml` 挂载 `../data:/app/data`（相对 compose 文件目录 `deploy/`），因此 DB 文件在宿主机是 `data/app.db`。
+
+### 2.2 生产建议布局（示例）
+
 宿主机目录（示例）：
 ```text
 /opt/new-pixiv-api/
@@ -36,6 +57,10 @@ compose 中挂载：
 ---
 
 ## 3. 示例 docker-compose.yml（草案）
+
+本仓库已提供一个可直接运行的 compose：`deploy/docker-compose.yml`（用于开发/自托管示例）。
+
+下方示例更偏“生产模板”（你可以按需改造到自己的 `/opt/...` 目录）：
 
 ```yaml
 services:
@@ -102,29 +127,56 @@ services:
 ### 5.1 备份（SQLite）
 
 推荐方式 A（离线，最安全）：
-1) `docker compose stop api worker`
-2) 复制 `./data/app.db` 到 `./backups/app.db.<ts>`
-3) `docker compose up -d`
+1) 停服务（本仓库示例）：
+   - `docker compose -f deploy/docker-compose.yml stop api worker`
+2) 备份 DB 文件（建议连同 WAL/SHM 一起备份）：
+   - Linux/macOS：`cp -a data/app.db* backups/`
+   - Windows/PowerShell：
+     - `New-Item -ItemType Directory -Force -Path backups | Out-Null`
+     - `Copy-Item -Path data/app.db* -Destination backups -Force`
+3) 启动服务：
+   - `docker compose -f deploy/docker-compose.yml up -d --build`
 
-推荐方式 B（在线，WAL 下也可用，但仍建议低峰执行）：
+推荐方式 B（在线备份；容器镜像默认不包含 `sqlite3` CLI，使用 Python 的 sqlite3.backup）：
 ```bash
-sqlite3 /data/app.db ".backup '/backups/app.db.<ts>'"
+docker compose -f deploy/docker-compose.yml exec -T api python - <<'PY'
+import os
+import sqlite3
+import time
+
+ts = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+src = "/app/data/app.db"
+dst_dir = "/app/data/backups"
+dst = f"{dst_dir}/app.db.{ts}"
+
+os.makedirs(dst_dir, exist_ok=True)
+
+with sqlite3.connect(src) as s, sqlite3.connect(dst) as d:
+    s.backup(d)
+print("backup_ok", dst)
+PY
 ```
 
 ### 5.2 升级流程（建议）
 1) 备份 DB
-2) 拉取/构建新镜像
-3) 运行迁移：`alembic upgrade head`
-4) 滚动重启：`docker compose up -d --force-recreate`
-5) 验收：
+2) 拉取/构建新镜像（本仓库示例为本地 build）：
+   - `docker compose -f deploy/docker-compose.yml build --pull`
+3) 运行迁移：
+   - `docker compose -f deploy/docker-compose.yml run --rm api alembic upgrade head`
+4) 重启：
+   - `docker compose -f deploy/docker-compose.yml up -d --force-recreate`
+5) Smoke 验收：
    - `GET /healthz` 200
    - `GET /version` 返回新 commit
    - `GET /random?format=json` 返回 NO_MATCH 或 OK（至少不 500）
 
 ### 5.3 回滚流程
 1) stop
-2) 恢复备份 DB（或回滚迁移）
-3) 使用旧镜像启动
+   - `docker compose -f deploy/docker-compose.yml stop api worker`
+2) 恢复备份 DB（优先恢复备份，而不是尝试 downgrade）：
+   - 复制备份文件覆盖 `data/app.db*`
+3) 使用旧代码/旧镜像启动：
+   - `docker compose -f deploy/docker-compose.yml up -d --build`
 
 ---
 
@@ -161,4 +213,3 @@ sqlite3 /data/app.db ".backup '/backups/app.db.<ts>'"
 ### 7.4 token 全部 backoff
 - refresh_token 失效：重新获取 token
 - 代理质量差导致刷新失败：先修 proxy
-
