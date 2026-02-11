@@ -11,6 +11,7 @@ import { LoginPage } from "../pages/LoginPage";
 import { PlaygroundPage } from "../pages/PlaygroundPage";
 import { TagsPage } from "../pages/TagsPage";
 import { AuthorsPage } from "../pages/AuthorsPage";
+import { TokensPage } from "../pages/TokensPage";
 import { PlaceholderPage } from "../pages/PlaceholderPage";
 
 export function App() {
@@ -28,6 +29,7 @@ export function App() {
             <Route path="images" element={<ImagesPage />} />
             <Route path="tags" element={<TagsPage />} />
             <Route path="authors" element={<AuthorsPage />} />
+            <Route path="tokens" element={<TokensPage />} />
             <Route path="*" element={<PlaceholderPage title="Not Found" />} />
           </Route>
           <Route path="*" element={<PlaceholderPage title="Not Found" />} />
