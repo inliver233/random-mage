@@ -1,15 +1,84 @@
-import { render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import React from "react";
-import { describe, expect, it } from "vitest";
+import { MemoryRouter } from "react-router-dom";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { getAdminToken } from "../auth/tokenStorage";
 import { LoginPage } from "./LoginPage";
 
 describe("LoginPage", () => {
-  it("renders", () => {
-    render(<LoginPage />);
-    expect(screen.getByText("Admin Login")).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("Username")).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("Password")).toBeInTheDocument();
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  beforeEach(() => {
+    localStorage.clear();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/admin/api/login")) {
+          return new Response(JSON.stringify({ ok: true, token: "tok_admin", request_id: "req_login" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return new Response(JSON.stringify({ ok: false, code: "NOT_FOUND", message: "not found", request_id: "req_x", details: {} }), {
+          status: 404,
+          headers: { "Content-Type": "application/json" },
+        });
+      }),
+    );
+  });
+
+  it("logs in and stores token", async () => {
+    render(
+      <MemoryRouter>
+        <LoginPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "admin" } });
+    fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "pw" } });
+    fireEvent.click(screen.getByRole("button", { name: /登\s*录/ }));
+
+    await waitFor(() => {
+      expect(getAdminToken()).toBe("tok_admin");
+    });
+    expect(await screen.findByText(/request_id:\s*req_login/)).toBeInTheDocument();
+    expect(screen.queryByText("tok_admin")).not.toBeInTheDocument();
+  });
+
+  it("shows error and request_id on failure", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/admin/api/login")) {
+          return new Response(
+            JSON.stringify({ ok: false, code: "UNAUTHORIZED", message: "bad", request_id: "req_bad", details: {} }),
+            { status: 401, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return new Response(JSON.stringify({ ok: false, code: "NOT_FOUND", message: "not found", request_id: "req_x", details: {} }), {
+          status: 404,
+          headers: { "Content-Type": "application/json" },
+        });
+      }),
+    );
+
+    render(
+      <MemoryRouter>
+        <LoginPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "admin" } });
+    fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "pw" } });
+    fireEvent.click(screen.getByRole("button", { name: /登\s*录/ }));
+
+    expect(await screen.findByText(/request_id:\s*req_bad/)).toBeInTheDocument();
+    expect(getAdminToken()).toBeNull();
   });
 });
-

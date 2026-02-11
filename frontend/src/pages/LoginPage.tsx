@@ -1,18 +1,55 @@
 import { Alert, Button, Card, Form, Input, Space, Typography } from "antd";
 import React, { useState } from "react";
+import { useNavigate } from "react-router-dom";
+
+import { ApiError, apiJson } from "../api/client";
+import { setAdminToken } from "../auth/tokenStorage";
 
 type LoginFormValues = {
   username: string;
   password: string;
 };
 
+type LoginResponse = {
+  ok: true;
+  token: string;
+  request_id: string;
+};
+
 export function LoginPage() {
+  const navigate = useNavigate();
+  const [form] = Form.useForm<LoginFormValues>();
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [requestId, setRequestId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  const onFinish = (_values: LoginFormValues) => {
+  const onFinish = async (values: LoginFormValues) => {
+    setLoading(true);
     setErrorMessage(null);
     setRequestId(null);
+
+    try {
+      const resp = await apiJson<LoginResponse>("/admin/api/login", {
+        method: "POST",
+        body: JSON.stringify({ username: values.username, password: values.password }),
+      });
+
+      setAdminToken(resp.token);
+      setRequestId(resp.request_id);
+      form.resetFields(["password"]);
+      navigate("/admin", { replace: true });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        setErrorMessage(err.message);
+        setRequestId(err.body?.request_id ? String(err.body.request_id) : null);
+      } else if (err instanceof Error) {
+        setErrorMessage(err.message);
+      } else {
+        setErrorMessage("Login failed");
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -39,7 +76,7 @@ export function LoginPage() {
             <Typography.Text type="secondary">request_id: {requestId}</Typography.Text>
           ) : null}
 
-          <Form<LoginFormValues> layout="vertical" onFinish={onFinish}>
+          <Form<LoginFormValues> form={form} layout="vertical" onFinish={onFinish}>
             <Form.Item
               label="Username"
               name="username"
@@ -56,20 +93,12 @@ export function LoginPage() {
               <Input.Password placeholder="Password" autoComplete="current-password" />
             </Form.Item>
 
-            <Button type="primary" htmlType="submit" block>
+            <Button type="primary" htmlType="submit" block loading={loading}>
               登录
             </Button>
           </Form>
-
-          <Alert
-            type="info"
-            message="TODO"
-            description="Login wiring pending (ISSUE-0196)."
-            showIcon
-          />
         </Space>
       </Card>
     </div>
   );
 }
-
