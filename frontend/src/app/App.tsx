@@ -3,6 +3,7 @@ import React from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import { PlaceholderPage } from "../pages/PlaceholderPage";
+import { LoginPage } from "../pages/LoginPage";
 
 export function App() {
   return (
@@ -10,7 +11,7 @@ export function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Navigate to="/admin" replace />} />
-          <Route path="/admin/login" element={<PlaceholderPage title="Login" />} />
+          <Route path="/admin/login" element={<LoginPage />} />
           <Route
             path="/admin"
             element={
@@ -30,4 +31,3 @@ export function App() {
     </ConfigProvider>
   );
 }
-
