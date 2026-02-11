@@ -6,6 +6,7 @@ import httpx
 from starlette.responses import StreamingResponse
 
 from app.core.errors import ApiError, ErrorCode
+from app.core.metrics import UPSTREAM_STREAM_ERRORS_TOTAL
 
 PIXIV_REFERER = "https://www.pixiv.net/"
 
@@ -35,6 +36,7 @@ async def stream_url(
     try:
         upstream = await client.send(request, stream=True)
     except httpx.ProxyError as exc:
+        UPSTREAM_STREAM_ERRORS_TOTAL.inc()
         await client.aclose()
         msg = str(exc).lower()
         if "407" in msg or "proxy authentication" in msg:
@@ -49,11 +51,13 @@ async def stream_url(
             status_code=502,
         ) from exc
     except Exception as exc:
+        UPSTREAM_STREAM_ERRORS_TOTAL.inc()
         await client.aclose()
         raise ApiError(code=ErrorCode.UPSTREAM_STREAM_ERROR, message="Upstream request failed", status_code=502) from exc
 
     if upstream.status_code not in {200, 206}:
         status = upstream.status_code
+        UPSTREAM_STREAM_ERRORS_TOTAL.inc()
         await upstream.aclose()
         await client.aclose()
         if status == 403:
@@ -71,6 +75,9 @@ async def stream_url(
         try:
             async for chunk in upstream.aiter_bytes():
                 yield chunk
+        except Exception:
+            UPSTREAM_STREAM_ERRORS_TOTAL.inc()
+            raise
         finally:
             await upstream.aclose()
             await client.aclose()

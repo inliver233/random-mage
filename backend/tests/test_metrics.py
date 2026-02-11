@@ -68,6 +68,7 @@ def test_metrics_exposes_random_jobs_and_proxy_metrics(tmp_path: Path, monkeypat
         text = resp.text
         assert "new_pixiv_random_requests_total" in text
         assert "new_pixiv_random_no_match_total" in text
+        assert "new_pixiv_upstream_stream_errors_total" in text
         assert "new_pixiv_jobs_status_count" in text
         assert "new_pixiv_proxy_endpoints_state_count" in text
 
