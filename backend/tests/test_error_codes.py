@@ -338,3 +338,26 @@ def test_error_codes_proxy_required_raised_when_fail_closed_enabled_without_prox
         assert body["ok"] is False
         assert body["code"] == "PROXY_REQUIRED"
         assert body["request_id"] == "req_test"
+
+
+def test_error_codes_proxy_auth_failed_defined_and_used() -> None:
+    assert ErrorCode.PROXY_AUTH_FAILED.value == "PROXY_AUTH_FAILED"
+    assert _references_error_code("PROXY_AUTH_FAILED") is True
+
+
+def test_error_codes_proxy_auth_failed_raised_on_proxy_407(monkeypatch) -> None:
+    async def fake_send(self, request: httpx.Request, **kwargs):  # type: ignore[no-untyped-def]
+        raise httpx.ProxyError("407 Proxy Authentication Required")
+
+    monkeypatch.setattr(httpx.AsyncClient, "send", fake_send, raising=True)
+
+    async def _run() -> None:
+        try:
+            await stream_url("https://example.test/proxy", cache_control="no-store")
+        except ApiError as exc:
+            assert exc.code == ErrorCode.PROXY_AUTH_FAILED
+            assert exc.status_code == 502
+        else:
+            raise AssertionError("expected ApiError")
+
+    asyncio.run(_run())

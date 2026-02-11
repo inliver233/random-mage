@@ -34,6 +34,16 @@ async def stream_url(
 
     try:
         upstream = await client.send(request, stream=True)
+    except httpx.ProxyError as exc:
+        await client.aclose()
+        msg = str(exc).lower()
+        if "407" in msg or "proxy authentication" in msg:
+            raise ApiError(
+                code=ErrorCode.PROXY_AUTH_FAILED,
+                message="Proxy authentication failed",
+                status_code=502,
+            ) from exc
+        raise ApiError(code=ErrorCode.UPSTREAM_STREAM_ERROR, message="Upstream request failed", status_code=502) from exc
     except Exception as exc:
         await client.aclose()
         raise ApiError(code=ErrorCode.UPSTREAM_STREAM_ERROR, message="Upstream request failed", status_code=502) from exc
