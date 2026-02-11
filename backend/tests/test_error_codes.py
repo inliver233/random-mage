@@ -123,3 +123,8 @@ def test_error_codes_bad_request_defined_and_used() -> None:
 def test_error_codes_unauthorized_defined_and_used() -> None:
     assert ErrorCode.UNAUTHORIZED.value == "UNAUTHORIZED"
     assert _references_error_code("UNAUTHORIZED") is True
+
+
+def test_error_codes_forbidden_defined_and_used() -> None:
+    assert ErrorCode.FORBIDDEN.value == "FORBIDDEN"
+    assert _references_error_code("FORBIDDEN") is True
