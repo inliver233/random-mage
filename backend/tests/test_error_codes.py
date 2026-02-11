@@ -259,3 +259,8 @@ def test_error_codes_unsupported_url_returned_in_import_errors(tmp_path: Path, m
 def test_error_codes_token_refresh_failed_defined_and_used() -> None:
     assert ErrorCode.TOKEN_REFRESH_FAILED.value == "TOKEN_REFRESH_FAILED"
     assert _references_error_code("TOKEN_REFRESH_FAILED") is True
+
+
+def test_error_codes_token_backoff_defined_and_used() -> None:
+    assert ErrorCode.TOKEN_BACKOFF.value == "TOKEN_BACKOFF"
+    assert _references_error_code("TOKEN_BACKOFF") is True
