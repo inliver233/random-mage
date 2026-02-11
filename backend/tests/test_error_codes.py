@@ -118,3 +118,8 @@ def test_error_codes_random_json_no_match_is_http_404(tmp_path: Path, monkeypatc
 def test_error_codes_bad_request_defined_and_used() -> None:
     assert ErrorCode.BAD_REQUEST.value == "BAD_REQUEST"
     assert _references_error_code("BAD_REQUEST") is True
+
+
+def test_error_codes_unauthorized_defined_and_used() -> None:
+    assert ErrorCode.UNAUTHORIZED.value == "UNAUTHORIZED"
+    assert _references_error_code("UNAUTHORIZED") is True
