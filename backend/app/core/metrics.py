@@ -36,6 +36,11 @@ RANDOM_REQUESTS_TOTAL = Counter(
     ["result"],
 )
 
+RANDOM_NO_MATCH_TOTAL = Counter(
+    "new_pixiv_random_no_match_total",
+    "Total /random NO_MATCH responses.",
+)
+
 RANDOM_LATENCY_SECONDS = Histogram(
     "new_pixiv_random_latency_seconds",
     "Latency for /random endpoint (seconds).",
@@ -79,6 +84,7 @@ METRICS_LAST_SCRAPE_SUCCESS = Gauge(
 def _init_labelsets() -> None:
     for result in RANDOM_RESULTS:
         RANDOM_REQUESTS_TOTAL.labels(result=result).inc(0)
+    RANDOM_NO_MATCH_TOTAL.inc(0)
     for status in JOB_STATUSES:
         JOBS_STATUS_COUNT.labels(status=status).set(0)
     for state in PROXY_STATES:
@@ -94,6 +100,8 @@ def observe_random_result(*, result: str, duration_s: float | None) -> None:
     if result not in RANDOM_RESULTS:
         result = "error"
     RANDOM_REQUESTS_TOTAL.labels(result=result).inc()
+    if result == "no_match":
+        RANDOM_NO_MATCH_TOTAL.inc()
     if duration_s is not None and duration_s >= 0:
         RANDOM_LATENCY_SECONDS.observe(duration_s)
 
@@ -113,4 +121,3 @@ def ensure_known_keys(keys: Iterable[str], counts: dict[str, int]) -> dict[str, 
     for k in keys:
         out.setdefault(k, 0)
     return out
-
