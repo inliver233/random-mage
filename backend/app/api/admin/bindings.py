@@ -347,3 +347,35 @@ async def set_binding_override(
         }
 
     return await with_sqlite_busy_retry(_op)
+
+
+@router.post("/bindings/{binding_id}/clear-override")
+async def clear_binding_override(
+    binding_id: int,
+    request: Request,
+    _claims: dict[str, Any] = Depends(get_admin_claims),
+) -> dict[str, Any]:
+    _ = _claims
+    if binding_id <= 0:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid binding id", status_code=400)
+
+    rid = get_or_create_request_id(request)
+    now = iso_utc_ms()
+
+    engine = request.app.state.engine
+    Session = create_sessionmaker(engine)
+
+    async def _op() -> dict[str, Any]:
+        async with Session() as session:
+            binding = await session.get(TokenProxyBinding, binding_id)
+            if binding is None:
+                raise ApiError(code=ErrorCode.NOT_FOUND, message="Binding not found", status_code=404)
+
+            binding.override_proxy_id = None
+            binding.override_expires_at = None
+            binding.updated_at = now
+            await session.commit()
+
+        return {"ok": True, "binding_id": str(binding_id), "request_id": rid}
+
+    return await with_sqlite_busy_retry(_op)
