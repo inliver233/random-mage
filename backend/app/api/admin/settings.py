@@ -118,6 +118,8 @@ async def update_settings(
     updated_by = f"admin:{actor}"
 
     updates: list[tuple[str, Any]] = []
+    proxy_enabled_override: bool | None = None
+    proxy_fail_closed_override: bool | None = None
 
     proxy = body.get("proxy")
     if proxy is not None:
@@ -128,12 +130,14 @@ async def update_settings(
             v = _as_bool(proxy.get("enabled"))
             if v is None:
                 raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid proxy.enabled", status_code=400)
+            proxy_enabled_override = bool(v)
             updates.append(("proxy.enabled", bool(v)))
 
         if "fail_closed" in proxy:
             v = _as_bool(proxy.get("fail_closed"))
             if v is None:
                 raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid proxy.fail_closed", status_code=400)
+            proxy_fail_closed_override = bool(v)
             updates.append(("proxy.fail_closed", bool(v)))
 
         if "route_mode" in proxy:
@@ -204,6 +208,25 @@ async def update_settings(
         raise ApiError(code=ErrorCode.BAD_REQUEST, message="Missing fields", status_code=400)
 
     engine = request.app.state.engine
+
+    if proxy_enabled_override is not None or proxy_fail_closed_override is not None:
+        values = await fetch_runtime_settings(engine)
+        runtime = runtime_config_from_values(values)
+        desired_enabled = proxy_enabled_override if proxy_enabled_override is not None else bool(runtime.proxy_enabled)
+        desired_fail_closed = (
+            proxy_fail_closed_override if proxy_fail_closed_override is not None else bool(runtime.proxy_fail_closed)
+        )
+        if desired_enabled and desired_fail_closed:
+            async with engine.connect() as conn:
+                result = await conn.exec_driver_sql("SELECT COUNT(*) FROM proxy_endpoints WHERE enabled=1;")
+                enabled_proxy_count = int(result.scalar_one())
+            if enabled_proxy_count <= 0:
+                raise ApiError(
+                    code=ErrorCode.PROXY_REQUIRED,
+                    message="Proxy required (fail-closed) but no enabled proxies",
+                    status_code=400,
+                )
+
     for key, value in updates:
         await set_runtime_setting(engine, key=key, value=value, updated_by=updated_by)
 
