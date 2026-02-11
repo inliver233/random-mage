@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import React from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ProxiesPage } from "./ProxiesPage";
 
@@ -10,12 +10,19 @@ function makeClient() {
 }
 
 describe("ProxiesPage", () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
   beforeEach(() => {
+    let endpointsCalls = 0;
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (input: RequestInfo | URL) => {
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
         if (url.endsWith("/admin/api/proxies/endpoints")) {
+          endpointsCalls += 1;
           return new Response(
             JSON.stringify({
               ok: true,
@@ -30,8 +37,19 @@ describe("ProxiesPage", () => {
                   last_error: null,
                 },
               ],
-              request_id: "req_proxies",
+              request_id: `req_proxies_${endpointsCalls}`,
             }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        if (url.endsWith("/admin/api/proxies/easy-proxies/import")) {
+          expect(init?.method).toBe("POST");
+          const body = init?.body ? JSON.parse(String(init.body)) : {};
+          expect(body.base_url).toBe("http://easy.test");
+          expect(body.password).toBe("pw_test");
+          expect(body.conflict_policy).toBe("skip_non_easy_proxies");
+          return new Response(
+            JSON.stringify({ ok: true, created: 1, updated: 0, skipped: 0, errors: [], request_id: "req_easy" }),
             { status: 200, headers: { "Content-Type": "application/json" } },
           );
         }
@@ -53,7 +71,23 @@ describe("ProxiesPage", () => {
 
     expect(await screen.findByText("Proxies")).toBeInTheDocument();
     expect(await screen.findByText("http://***:***@1.2.3.4:8080")).toBeInTheDocument();
-    expect(await screen.findByText(/request_id:\s*req_proxies/)).toBeInTheDocument();
+    expect(await screen.findByText(/request_id:\s*req_proxies_1/)).toBeInTheDocument();
+  });
+
+  it("imports from easy_proxies", async () => {
+    const qc = makeClient();
+    render(
+      <QueryClientProvider client={qc}>
+        <ProxiesPage />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("Proxies")).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText("http://easy-proxies:9090"), { target: { value: "http://easy.test" } });
+    fireEvent.change(screen.getByPlaceholderText("required"), { target: { value: "pw_test" } });
+    fireEvent.click(screen.getByRole("button", { name: /从\s*easy_proxies\s*导入/ }));
+
+    expect(await screen.findByText("easy_proxies imported")).toBeInTheDocument();
+    expect(await screen.findByText(/request_id:\s*req_easy/)).toBeInTheDocument();
   });
 });
-

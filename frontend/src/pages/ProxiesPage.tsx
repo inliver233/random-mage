@@ -1,7 +1,7 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Card, Form, Input, Select, Skeleton, Space, Table, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import React from "react";
+import React, { useState } from "react";
 
 import { ApiError, apiJson } from "../api/client";
 
@@ -21,6 +21,21 @@ type ProxiesEndpointsResponse = {
   request_id: string;
 };
 
+type EasyProxiesImportFormValues = {
+  base_url: string;
+  password: string;
+  conflict_policy: "overwrite" | "skip_non_easy_proxies";
+};
+
+type EasyProxiesImportResponse = {
+  ok: true;
+  created: number;
+  updated: number;
+  skipped: number;
+  errors: Array<{ code: string; message: string }>;
+  request_id: string;
+};
+
 function requestIdFromError(err: unknown): string | null {
   if (!(err instanceof ApiError)) return null;
   return err.body?.request_id ? String(err.body.request_id) : null;
@@ -37,9 +52,46 @@ const columns: ColumnsType<ProxyEndpointItem> = [
 ];
 
 export function ProxiesPage() {
+  const qc = useQueryClient();
   const q = useQuery({
     queryKey: ["admin", "proxies", "endpoints"],
     queryFn: () => apiJson<ProxiesEndpointsResponse>("/admin/api/proxies/endpoints"),
+  });
+
+  const [easyErrorMessage, setEasyErrorMessage] = useState<string | null>(null);
+  const [easyRequestId, setEasyRequestId] = useState<string | null>(null);
+  const [easyResult, setEasyResult] = useState<EasyProxiesImportResponse | null>(null);
+  const [easyForm] = Form.useForm<EasyProxiesImportFormValues>();
+
+  const easyImport = useMutation({
+    mutationFn: (values: EasyProxiesImportFormValues) =>
+      apiJson<EasyProxiesImportResponse>("/admin/api/proxies/easy-proxies/import", {
+        method: "POST",
+        body: JSON.stringify(values),
+      }),
+    onMutate: () => {
+      setEasyErrorMessage(null);
+      setEasyRequestId(null);
+      setEasyResult(null);
+    },
+    onSuccess: (data) => {
+      setEasyResult(data);
+      setEasyRequestId(data.request_id);
+      easyForm.setFieldValue("password", "");
+      qc.invalidateQueries({ queryKey: ["admin", "proxies", "endpoints"] });
+    },
+    onError: (err) => {
+      if (err instanceof ApiError) {
+        setEasyErrorMessage(err.message);
+        setEasyRequestId(requestIdFromError(err));
+        return;
+      }
+      if (err instanceof Error) {
+        setEasyErrorMessage(err.message);
+        return;
+      }
+      setEasyErrorMessage("easy_proxies import failed");
+    },
   });
 
   return (
@@ -77,12 +129,20 @@ export function ProxiesPage() {
       </Card>
 
       <Card title="easy_proxies">
-        <Form layout="vertical" initialValues={{ base_url: "", password: "", conflict_policy: "skip_non_easy_proxies" }}>
-          <Form.Item label="Base URL" name="base_url">
+        {easyErrorMessage ? <Alert type="error" showIcon message={easyErrorMessage} /> : null}
+        {easyRequestId ? <Typography.Text type="secondary">request_id: {easyRequestId}</Typography.Text> : null}
+
+        <Form<EasyProxiesImportFormValues>
+          form={easyForm}
+          layout="vertical"
+          initialValues={{ base_url: "", password: "", conflict_policy: "skip_non_easy_proxies" }}
+          onFinish={(v) => easyImport.mutate(v)}
+        >
+          <Form.Item label="Base URL" name="base_url" rules={[{ required: true, message: "base_url is required" }]}>
             <Input placeholder="http://easy-proxies:9090" />
           </Form.Item>
-          <Form.Item label="Password" name="password">
-            <Input.Password placeholder="optional" />
+          <Form.Item label="Password" name="password" rules={[{ required: true, message: "password is required" }]}>
+            <Input.Password placeholder="required" />
           </Form.Item>
           <Form.Item label="Conflict policy" name="conflict_policy">
             <Select
@@ -92,9 +152,20 @@ export function ProxiesPage() {
               ]}
             />
           </Form.Item>
-          <Button disabled>从 easy_proxies 导入</Button>
+          <Button type="primary" htmlType="submit" loading={easyImport.isPending}>
+            从 easy_proxies 导入
+          </Button>
         </Form>
-        <Alert type="info" showIcon message="TODO" description="easy_proxies wiring pending (ISSUE-0204)." style={{ marginTop: 12 }} />
+        {easyImport.isPending ? <Alert type="info" showIcon message="Importing from easy_proxies..." style={{ marginTop: 12 }} /> : null}
+        {easyResult ? (
+          <Alert
+            type="success"
+            showIcon
+            message="easy_proxies imported"
+            description={`created: ${easyResult.created}, updated: ${easyResult.updated}, skipped: ${easyResult.skipped}, errors: ${easyResult.errors.length}`}
+            style={{ marginTop: 12 }}
+          />
+        ) : null}
       </Card>
 
       <Card title="Endpoints">
@@ -133,4 +204,3 @@ export function ProxiesPage() {
     </Space>
   );
 }
-
