@@ -107,3 +107,114 @@ async def create_hydration_run(
         "request_id": rid,
     }
 
+
+async def _set_run_and_job_status(
+    request: Request,
+    *,
+    run_id: int,
+    target_status: str,
+    allowed_from: set[str],
+    job_status: str,
+) -> dict[str, Any]:
+    if run_id <= 0:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid hydration_run id", status_code=400)
+
+    rid = get_or_create_request_id(request)
+    now = iso_utc_ms()
+
+    engine = request.app.state.engine
+    Session = create_sessionmaker(engine)
+
+    async def _op() -> dict[str, Any]:
+        async with Session() as session:
+            run = await session.get(HydrationRun, run_id)
+            if run is None:
+                raise ApiError(code=ErrorCode.NOT_FOUND, message="Hydration run not found", status_code=404)
+
+            if str(run.status) not in allowed_from:
+                raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported status transition", status_code=400)
+
+            run.status = target_status
+            run.updated_at = now
+            if target_status in {"canceled", "completed", "failed"} and run.finished_at is None:
+                run.finished_at = now
+
+            job = (
+                (
+                    await session.execute(
+                        sa.select(JobRow)
+                        .where(JobRow.ref_type == "hydration_run", JobRow.ref_id == str(run_id))
+                        .order_by(JobRow.id.desc())
+                        .limit(1)
+                    )
+                )
+                .scalars()
+                .first()
+            )
+            if job is not None:
+                job.status = job_status
+                if job_status in {"pending", "canceled", "paused", "dlq"}:
+                    job.run_after = None
+                    job.locked_by = None
+                    job.locked_at = None
+                job.updated_at = now
+
+            await session.commit()
+
+        return {
+            "ok": True,
+            "hydration_run_id": str(run_id),
+            "status": target_status,
+            "job_status": job_status if job is not None else "",
+            "request_id": rid,
+        }
+
+    return await with_sqlite_busy_retry(_op)
+
+
+@router.post("/hydration-runs/{run_id}/pause")
+async def pause_hydration_run(
+    run_id: int,
+    request: Request,
+    _claims: dict[str, Any] = Depends(get_admin_claims),
+) -> dict[str, Any]:
+    _ = _claims
+    return await _set_run_and_job_status(
+        request,
+        run_id=run_id,
+        target_status="paused",
+        allowed_from={"pending", "running"},
+        job_status="paused",
+    )
+
+
+@router.post("/hydration-runs/{run_id}/resume")
+async def resume_hydration_run(
+    run_id: int,
+    request: Request,
+    _claims: dict[str, Any] = Depends(get_admin_claims),
+) -> dict[str, Any]:
+    _ = _claims
+    return await _set_run_and_job_status(
+        request,
+        run_id=run_id,
+        target_status="pending",
+        allowed_from={"paused"},
+        job_status="pending",
+    )
+
+
+@router.post("/hydration-runs/{run_id}/cancel")
+async def cancel_hydration_run(
+    run_id: int,
+    request: Request,
+    _claims: dict[str, Any] = Depends(get_admin_claims),
+) -> dict[str, Any]:
+    _ = _claims
+    return await _set_run_and_job_status(
+        request,
+        run_id=run_id,
+        target_status="canceled",
+        allowed_from={"pending", "running", "paused"},
+        job_status="canceled",
+    )
