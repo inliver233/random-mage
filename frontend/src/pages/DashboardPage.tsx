@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
-import { Alert, Card, Col, Row, Skeleton, Space, Typography } from "antd";
+import { Alert, Button, Card, Col, Row, Skeleton, Space, Typography } from "antd";
 import React from "react";
+import { useNavigate } from "react-router-dom";
 
 import { ApiError, apiJson } from "../api/client";
 
@@ -30,6 +31,8 @@ function requestIdFromError(err: unknown): string | null {
 }
 
 export function DashboardPage() {
+  const navigate = useNavigate();
+
   const settings = useQuery({
     queryKey: ["admin", "settings"],
     queryFn: () => apiJson<SettingsResponse>("/admin/api/settings"),
@@ -56,8 +59,15 @@ export function DashboardPage() {
   const failedJobCount = failedJobs.data?.items.length ?? 0;
 
   return (
-    <Row gutter={[16, 16]}>
-      <Col xs={24} md={12} xl={6}>
+    <>
+      <Space wrap style={{ marginBottom: 16 }}>
+        <Button type="primary" onClick={() => navigate("/admin/import")}>
+          去导入
+        </Button>
+      </Space>
+
+      <Row gutter={[16, 16]}>
+        <Col xs={24} md={12} xl={6}>
         <Card title="Settings">
           {settings.isLoading ? (
             <Skeleton active />
@@ -138,7 +148,7 @@ export function DashboardPage() {
           )}
         </Card>
       </Col>
-    </Row>
+      </Row>
+    </>
   );
 }
-

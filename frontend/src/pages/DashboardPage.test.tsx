@@ -1,15 +1,22 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import React from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DashboardPage } from "./DashboardPage";
+import { ImportPage } from "./ImportPage";
 
 function makeClient() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });
 }
 
 describe("DashboardPage", () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
   beforeEach(() => {
     vi.stubGlobal(
       "fetch",
@@ -60,7 +67,12 @@ describe("DashboardPage", () => {
     const qc = makeClient();
     render(
       <QueryClientProvider client={qc}>
-        <DashboardPage />
+        <MemoryRouter initialEntries={["/admin"]}>
+          <Routes>
+            <Route path="/admin" element={<DashboardPage />} />
+            <Route path="/admin/import" element={<ImportPage />} />
+          </Routes>
+        </MemoryRouter>
       </QueryClientProvider>,
     );
 
@@ -68,5 +80,22 @@ describe("DashboardPage", () => {
     expect(await screen.findByText("count: 1")).toBeInTheDocument();
     expect(await screen.findByText("count: 3")).toBeInTheDocument();
   });
-});
 
+  it("navigates to import", async () => {
+    const qc = makeClient();
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={["/admin"]}>
+          <Routes>
+            <Route path="/admin" element={<DashboardPage />} />
+            <Route path="/admin/import" element={<ImportPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("Settings")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /去\s*导\s*入/ }));
+    expect(await screen.findByText("Import")).toBeInTheDocument();
+  });
+});
