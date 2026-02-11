@@ -1,6 +1,7 @@
 import { useMutation } from "@tanstack/react-query";
 import { Alert, Button, Card, Col, Form, Input, InputNumber, Row, Select, Skeleton, Space, Switch, Typography } from "antd";
 import React, { useEffect } from "react";
+import { useLocation } from "react-router-dom";
 
 import { ApiError, type ApiErrorBody, apiFetch, apiJson } from "../api/client";
 
@@ -174,9 +175,22 @@ async function copyText(text: string): Promise<void> {
 }
 
 export function PlaygroundPage() {
+  const location = useLocation();
   const [form] = Form.useForm<PlaygroundFormValues>();
 
   const m = useMutation({ mutationFn: fetchPlayground });
+
+  useEffect(() => {
+    const sp = new URLSearchParams(location.search);
+    const format = sp.get("format");
+    const includedTags = sp.get("included_tags");
+
+    const updates: Partial<PlaygroundFormValues> = {};
+    if (format === "image" || format === "json" || format === "redirect") updates.format = format;
+    if (includedTags != null) updates.included_tags = includedTags;
+
+    if (Object.keys(updates).length > 0) form.setFieldsValue(updates);
+  }, [form, location.search]);
 
   useEffect(() => {
     if (m.data?.kind !== "image") return;

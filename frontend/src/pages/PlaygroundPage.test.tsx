@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
 import React from "react";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PlaygroundPage } from "./PlaygroundPage";
@@ -33,7 +34,11 @@ describe("PlaygroundPage", () => {
     const qc = makeClient();
     render(
       <QueryClientProvider client={qc}>
-        <PlaygroundPage />
+        <MemoryRouter initialEntries={["/admin/random"]}>
+          <Routes>
+            <Route path="/admin/random" element={<PlaygroundPage />} />
+          </Routes>
+        </MemoryRouter>
       </QueryClientProvider>,
     );
 
@@ -42,4 +47,3 @@ describe("PlaygroundPage", () => {
     expect(await screen.findByText(/request_id:\s*req_play/)).toBeInTheDocument();
   });
 });
-

@@ -1,8 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import React from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { PlaygroundPage } from "./PlaygroundPage";
 import { TagsPage } from "./TagsPage";
 
 function makeClient() {
@@ -10,6 +12,11 @@ function makeClient() {
 }
 
 describe("TagsPage", () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
   beforeEach(() => {
     vi.stubGlobal(
       "fetch",
@@ -38,7 +45,12 @@ describe("TagsPage", () => {
     const qc = makeClient();
     render(
       <QueryClientProvider client={qc}>
-        <TagsPage />
+        <MemoryRouter initialEntries={["/admin/tags"]}>
+          <Routes>
+            <Route path="/admin/tags" element={<TagsPage />} />
+            <Route path="/admin/random" element={<PlaygroundPage />} />
+          </Routes>
+        </MemoryRouter>
       </QueryClientProvider>,
     );
 
@@ -46,5 +58,27 @@ describe("TagsPage", () => {
     expect(await screen.findByText("tag1")).toBeInTheDocument();
     expect(await screen.findByText(/request_id:\s*req_tags/)).toBeInTheDocument();
   });
-});
 
+  it("navigates to playground with included_tags prefill", async () => {
+    const qc = makeClient();
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={["/admin/tags"]}>
+          <Routes>
+            <Route path="/admin/tags" element={<TagsPage />} />
+            <Route path="/admin/random" element={<PlaygroundPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("tag1")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /从\s*该\s*标\s*签\s*随\s*机\s*一\s*张/ }));
+    expect(await screen.findByText("Random Playground")).toBeInTheDocument();
+
+    await waitFor(() => {
+      const input = screen.getByLabelText(/Included tags/i) as HTMLInputElement;
+      expect(input.value).toBe("tag1");
+    });
+  });
+});
