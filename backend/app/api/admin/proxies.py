@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import sqlalchemy as sa
@@ -11,6 +12,7 @@ from app.core.errors import ApiError, ErrorCode
 from app.core.proxy_uri import parse_proxy_uri
 from app.core.request_id import get_or_create_request_id
 from app.core.time import iso_utc_ms
+from app.db.models.jobs import JobRow
 from app.db.models.proxy_endpoints import ProxyEndpoint
 from app.db.session import create_sessionmaker, with_sqlite_busy_retry
 from app.easy_proxies.client import EasyProxiesError, easy_proxies_auth, easy_proxies_export
@@ -330,3 +332,33 @@ async def import_easy_proxies(
         "errors": errors[:200],
         "request_id": rid,
     }
+
+
+@router.post("/proxies/probe")
+async def probe_proxies(
+    request: Request,
+    _claims: dict[str, Any] = Depends(get_admin_claims),
+) -> dict[str, Any]:
+    _ = _claims
+    rid = get_or_create_request_id(request)
+
+    engine = request.app.state.engine
+    Session = create_sessionmaker(engine)
+
+    async def _op() -> int:
+        async with Session() as session:
+            job = JobRow(
+                type="proxy_probe",
+                status="pending",
+                payload_json=json.dumps({"scope": "all"}, ensure_ascii=False),
+                ref_type="proxy_probe",
+                ref_id="all",
+            )
+            session.add(job)
+            await session.flush()
+            await session.commit()
+            return int(job.id)
+
+    job_id = await with_sqlite_busy_retry(_op)
+
+    return {"ok": True, "job_id": str(job_id), "request_id": rid}
