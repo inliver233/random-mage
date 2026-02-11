@@ -8,6 +8,7 @@ from typing import Any, Literal
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
+from pydantic import ValidationError
 from starlette.datastructures import UploadFile
 
 from app.api.admin.deps import get_admin_claims
@@ -93,6 +94,13 @@ def _parse_bool(value: Any, *, default: bool = False) -> bool:
     return default
 
 
+def _validate_import_create(data: dict[str, Any]) -> ImportCreateRequest:
+    try:
+        return ImportCreateRequest(**data)
+    except ValidationError as exc:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid import body", status_code=400) from exc
+
+
 async def _load_import_request(request: Request) -> ImportCreateRequest:
     content_type = (request.headers.get("content-type") or "").lower()
 
@@ -100,7 +108,7 @@ async def _load_import_request(request: Request) -> ImportCreateRequest:
         data = await request.json()
         if not isinstance(data, dict):
             raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid JSON body", status_code=400)
-        return ImportCreateRequest(**data)
+        return _validate_import_create(data)
 
     if content_type.startswith("multipart/form-data"):
         form = await request.form()
@@ -115,11 +123,13 @@ async def _load_import_request(request: Request) -> ImportCreateRequest:
         raw = await file_obj.read()
         text = raw.decode("utf-8", errors="replace")
 
-        return ImportCreateRequest(
-            text=text,
-            dry_run=_parse_bool(form.get("dry_run"), default=False),
-            hydrate_on_import=_parse_bool(form.get("hydrate_on_import"), default=False),
-            source=str(form.get("source") or "manual"),
+        return _validate_import_create(
+            {
+                "text": text,
+                "dry_run": _parse_bool(form.get("dry_run"), default=False),
+                "hydrate_on_import": _parse_bool(form.get("hydrate_on_import"), default=False),
+                "source": str(form.get("source") or "manual"),
+            }
         )
 
     raise ApiError(code=ErrorCode.INVALID_UPLOAD_TYPE, message="Unsupported content type", status_code=400)

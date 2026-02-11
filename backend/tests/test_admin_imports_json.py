@@ -225,3 +225,34 @@ def test_admin_imports_rollback_disable_and_delete(tmp_path: Path, monkeypatch) 
         assert delete_resp.status_code == 200
         assert delete_resp.json()["updated"] == 2
         assert asyncio.run(_count_status(4)) == 2
+
+
+def test_admin_imports_invalid_body_returns_400(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "admin_imports_invalid_body.db"
+    db_url = "sqlite+aiosqlite:///" + db_path.as_posix()
+
+    monkeypatch.setenv("APP_ENV", "dev")
+    monkeypatch.setenv("DATABASE_URL", db_url)
+    monkeypatch.setenv("SECRET_KEY", "secret_test")
+    monkeypatch.setenv("ADMIN_USERNAME", "admin")
+
+    app = create_app()
+
+    async def _migrate() -> None:
+        async with app.state.engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+    asyncio.run(_migrate())
+
+    token = create_jwt(secret_key="secret_test", subject="admin", ttl_s=3600)
+    with TestClient(app) as client:
+        resp = client.post(
+            "/admin/api/imports",
+            headers={"Authorization": f"Bearer {token}", "X-Request-Id": "req_test"},
+            json={"text": "", "dry_run": False},
+        )
+        assert resp.status_code == 400
+        body = resp.json()
+        assert body["ok"] is False
+        assert body["code"] == "BAD_REQUEST"
+        assert body["request_id"] == "req_test"
