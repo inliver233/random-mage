@@ -15,6 +15,7 @@ import { TokensPage } from "../pages/TokensPage";
 import { ProxiesPage } from "../pages/ProxiesPage";
 import { BindingsPage } from "../pages/BindingsPage";
 import { JobsPage } from "../pages/JobsPage";
+import { SettingsPage } from "../pages/SettingsPage";
 import { PlaceholderPage } from "../pages/PlaceholderPage";
 
 export function App() {
@@ -36,6 +37,7 @@ export function App() {
             <Route path="proxies" element={<ProxiesPage />} />
             <Route path="bindings" element={<BindingsPage />} />
             <Route path="jobs" element={<JobsPage />} />
+            <Route path="settings" element={<SettingsPage />} />
             <Route path="*" element={<PlaceholderPage title="Not Found" />} />
           </Route>
           <Route path="*" element={<PlaceholderPage title="Not Found" />} />
