@@ -22,6 +22,9 @@ class Settings:
     imgproxy_max_dim: int
     imgproxy_default_options: str
     imgproxy_url_chunk_size: int
+    public_api_key_required: bool
+    public_api_key_rpm: int
+    public_api_key_burst: int
 
     @property
     def is_prod(self) -> bool:
@@ -31,6 +34,15 @@ class Settings:
 def _get(env: Mapping[str, str], key: str, default: str) -> str:
     value = env.get(key, default)
     return value.strip()
+
+
+def _get_bool(env: Mapping[str, str], key: str, default: bool) -> bool:
+    raw = _get(env, key, "1" if default else "0").lower()
+    if raw in {"1", "true", "yes", "y", "on"}:
+        return True
+    if raw in {"0", "false", "no", "n", "off"}:
+        return False
+    return default
 
 
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
@@ -65,6 +77,18 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         imgproxy_url_chunk_size = 16
     imgproxy_url_chunk_size = max(0, min(int(imgproxy_url_chunk_size), 128))
 
+    public_api_key_required = _get_bool(env, "PUBLIC_API_KEY_REQUIRED", False)
+    try:
+        public_api_key_rpm = int(_get(env, "PUBLIC_API_KEY_RPM", "0") or "0")
+    except Exception:
+        public_api_key_rpm = 0
+    public_api_key_rpm = max(0, min(int(public_api_key_rpm), 10_000_000))
+    try:
+        public_api_key_burst = int(_get(env, "PUBLIC_API_KEY_BURST", "0") or "0")
+    except Exception:
+        public_api_key_burst = 0
+    public_api_key_burst = max(0, min(int(public_api_key_burst), 10_000_000))
+
     settings = Settings(
         app_env=app_env,
         database_url=database_url,
@@ -81,6 +105,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         imgproxy_max_dim=imgproxy_max_dim,
         imgproxy_default_options=imgproxy_default_options,
         imgproxy_url_chunk_size=imgproxy_url_chunk_size,
+        public_api_key_required=public_api_key_required,
+        public_api_key_rpm=public_api_key_rpm,
+        public_api_key_burst=public_api_key_burst,
     )
 
     if settings.is_prod:

@@ -128,6 +128,11 @@ services:
 - `IMGPROXY_DEFAULT_OPTIONS=rs:fit:2048:2048`（可选；默认按 MAX_DIM 生成）
 - `IMGPROXY_URL_CHUNK_SIZE=16`（可选；默认 16）
 
+### 4.6 Public API Key（可选；对外部署强烈建议开启）
+- `PUBLIC_API_KEY_REQUIRED=true|false`（默认 false）
+- `PUBLIC_API_KEY_RPM=60`（默认 0=不启用限流；按 API key 维度）
+- `PUBLIC_API_KEY_BURST=60`（默认 0=自动用 RPM 作为 burst）
+
 ---
 
 ## 5. 备份与升级（必须写成 SOP）

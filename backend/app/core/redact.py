@@ -9,6 +9,8 @@ REDACTED = "***"
 _SENSITIVE_KEY_PARTS = (
     "refresh",
     "token",
+    "api_key",
+    "apikey",
     "authorization",
     "password",
     "secret",

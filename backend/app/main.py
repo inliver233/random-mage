@@ -14,10 +14,11 @@ from app.api.public.random import router as random_router
 from app.api.public.tags import router as tags_router
 from app.api.public.version import router as version_router
 from app.core.config import load_settings
+from app.core.api_keys import ApiKeyAuthConfig, ApiKeyAuthenticator, ApiKeyRateLimiter, require_public_api_key
 from app.core.errors import ApiError, json_error_response
 from app.core.logging import configure_logging
 from app.core.metrics import observe_random_result
-from app.core.request_id import build_request_id_middleware
+from app.core.request_id import build_request_id_middleware, get_or_create_request_id, set_request_id_on_state
 from app.db.engine import create_engine
 
 
@@ -40,6 +41,50 @@ def create_app() -> FastAPI:
     request_id_middleware = build_request_id_middleware()
     if request_id_middleware is not None:
         app.add_middleware(request_id_middleware)
+
+    engine = create_engine(settings.database_url)
+    app.state.engine = engine
+
+    api_key_cfg = ApiKeyAuthConfig(
+        required=bool(settings.public_api_key_required),
+        rpm=int(settings.public_api_key_rpm),
+        burst=int(settings.public_api_key_burst),
+        secret_key=str(settings.secret_key),
+    )
+    app.state.api_key_authenticator = ApiKeyAuthenticator(engine, api_key_cfg)
+    app.state.api_key_limiter = ApiKeyRateLimiter(rpm=int(api_key_cfg.rpm), burst=int(api_key_cfg.burst))
+
+    @app.middleware("http")
+    async def _public_api_key_middleware(request: Request, call_next):  # type: ignore[no-redef]
+        if not bool(settings.public_api_key_required):
+            return await call_next(request)
+
+        path = request.url.path
+        if path.startswith("/admin") or path.startswith("/metrics"):
+            return await call_next(request)
+        if path in {"/healthz", "/version", "/openapi.json", "/docs", "/redoc"}:
+            return await call_next(request)
+
+        rid = get_or_create_request_id(request)
+        set_request_id_on_state(request, rid)
+
+        try:
+            api_key_id = await require_public_api_key(
+                request.app.state.api_key_authenticator,
+                request.app.state.api_key_limiter,
+                headers=request.headers,
+            )
+        except ApiError as exc:
+            return json_error_response(
+                code=exc.code,
+                message=exc.message,
+                status_code=exc.status_code,
+                request=request,
+                details=exc.details,
+            )
+        request.state.api_key_id = int(api_key_id)
+
+        return await call_next(request)
 
     def _random_result_from_status(status: int) -> str:
         if status in {200, 301, 302, 303, 307, 308}:
@@ -68,7 +113,6 @@ def create_app() -> FastAPI:
             observe_random_result(result=_random_result_from_status(status_code), duration_s=duration_s)
 
     app.state.settings = settings
-    app.state.engine = create_engine(settings.database_url)
 
     @app.on_event("shutdown")
     async def _shutdown() -> None:  # type: ignore[no-redef]

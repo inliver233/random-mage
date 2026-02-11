@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.api.admin.auth import router as auth_router
+from app.api.admin.api_keys import router as api_keys_router
 from app.api.admin.bindings import router as bindings_router
 from app.api.admin.hydration_runs import router as hydration_runs_router
 from app.api.admin.imports import router as imports_router
@@ -14,6 +15,7 @@ from app.api.admin.tokens import router as tokens_router
 
 router = APIRouter(prefix="/admin/api")
 router.include_router(auth_router)
+router.include_router(api_keys_router)
 router.include_router(bindings_router)
 router.include_router(hydration_runs_router)
 router.include_router(imports_router)
