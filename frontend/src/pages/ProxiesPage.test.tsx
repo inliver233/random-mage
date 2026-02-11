@@ -53,6 +53,13 @@ describe("ProxiesPage", () => {
             { status: 200, headers: { "Content-Type": "application/json" } },
           );
         }
+        if (url.endsWith("/admin/api/proxies/probe")) {
+          expect(init?.method).toBe("POST");
+          return new Response(JSON.stringify({ ok: true, job_id: "job_1", request_id: "req_probe" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
         return new Response(JSON.stringify({ ok: false, code: "NOT_FOUND", message: "not found", request_id: "req_x", details: {} }), {
           status: 404,
           headers: { "Content-Type": "application/json" },
@@ -89,5 +96,21 @@ describe("ProxiesPage", () => {
 
     expect(await screen.findByText("easy_proxies imported")).toBeInTheDocument();
     expect(await screen.findByText(/request_id:\s*req_easy/)).toBeInTheDocument();
+  });
+
+  it("enqueues proxy probe job", async () => {
+    const qc = makeClient();
+    render(
+      <QueryClientProvider client={qc}>
+        <ProxiesPage />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("Proxies")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /探测健康/ }));
+
+    expect(await screen.findByText("probe enqueued")).toBeInTheDocument();
+    expect(await screen.findByText(/job_id:\s*job_1/)).toBeInTheDocument();
+    expect(await screen.findByText(/request_id:\s*req_probe/)).toBeInTheDocument();
   });
 });

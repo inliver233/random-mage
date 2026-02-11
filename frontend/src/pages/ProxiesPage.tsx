@@ -36,6 +36,12 @@ type EasyProxiesImportResponse = {
   request_id: string;
 };
 
+type ProxiesProbeResponse = {
+  ok: true;
+  job_id: string;
+  request_id: string;
+};
+
 function requestIdFromError(err: unknown): string | null {
   if (!(err instanceof ApiError)) return null;
   return err.body?.request_id ? String(err.body.request_id) : null;
@@ -58,10 +64,39 @@ export function ProxiesPage() {
     queryFn: () => apiJson<ProxiesEndpointsResponse>("/admin/api/proxies/endpoints"),
   });
 
+  const [probeErrorMessage, setProbeErrorMessage] = useState<string | null>(null);
+  const [probeRequestId, setProbeRequestId] = useState<string | null>(null);
+  const [probeJobId, setProbeJobId] = useState<string | null>(null);
+
   const [easyErrorMessage, setEasyErrorMessage] = useState<string | null>(null);
   const [easyRequestId, setEasyRequestId] = useState<string | null>(null);
   const [easyResult, setEasyResult] = useState<EasyProxiesImportResponse | null>(null);
   const [easyForm] = Form.useForm<EasyProxiesImportFormValues>();
+
+  const probe = useMutation({
+    mutationFn: () => apiJson<ProxiesProbeResponse>("/admin/api/proxies/probe", { method: "POST" }),
+    onMutate: () => {
+      setProbeErrorMessage(null);
+      setProbeRequestId(null);
+      setProbeJobId(null);
+    },
+    onSuccess: (data) => {
+      setProbeJobId(data.job_id);
+      setProbeRequestId(data.request_id);
+    },
+    onError: (err) => {
+      if (err instanceof ApiError) {
+        setProbeErrorMessage(err.message);
+        setProbeRequestId(requestIdFromError(err));
+        return;
+      }
+      if (err instanceof Error) {
+        setProbeErrorMessage(err.message);
+        return;
+      }
+      setProbeErrorMessage("Probe enqueue failed");
+    },
+  });
 
   const easyImport = useMutation({
     mutationFn: (values: EasyProxiesImportFormValues) =>
@@ -170,9 +205,23 @@ export function ProxiesPage() {
 
       <Card title="Endpoints">
         <Space wrap style={{ marginBottom: 12 }}>
-          <Button disabled>探测健康（入队）</Button>
+          <Button type="primary" onClick={() => probe.mutate()} loading={probe.isPending}>
+            探测健康（入队）
+          </Button>
           <Button disabled>刷新代理</Button>
         </Space>
+        {probe.isPending ? <Alert type="info" showIcon message="Enqueueing probe job..." style={{ marginBottom: 12 }} /> : null}
+        {probeErrorMessage ? <Alert type="error" showIcon message={probeErrorMessage} style={{ marginBottom: 12 }} /> : null}
+        {probeJobId ? (
+          <Alert
+            type="success"
+            showIcon
+            message="probe enqueued"
+            description={`job_id: ${probeJobId}`}
+            style={{ marginBottom: 12 }}
+          />
+        ) : null}
+        {probeRequestId ? <Typography.Text type="secondary">request_id: {probeRequestId}</Typography.Text> : null}
 
         {q.isLoading ? (
           <Skeleton active />
