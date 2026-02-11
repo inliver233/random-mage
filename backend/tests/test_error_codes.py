@@ -138,3 +138,8 @@ def test_error_codes_not_found_defined_and_used() -> None:
 def test_error_codes_internal_error_defined_and_used() -> None:
     assert ErrorCode.INTERNAL_ERROR.value == "INTERNAL_ERROR"
     assert _references_error_code("INTERNAL_ERROR") is True
+
+
+def test_error_codes_no_match_defined_and_used() -> None:
+    assert ErrorCode.NO_MATCH.value == "NO_MATCH"
+    assert _references_error_code("NO_MATCH") is True
