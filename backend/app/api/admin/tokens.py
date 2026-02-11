@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import sqlalchemy as sa
@@ -9,8 +10,11 @@ from app.api.admin.deps import get_admin_claims
 from app.core.crypto import FieldEncryptor, mask_secret
 from app.core.errors import ApiError, ErrorCode
 from app.core.request_id import get_or_create_request_id
+from app.core.time import iso_utc_ms
 from app.db.models.pixiv_tokens import PixivToken
 from app.db.session import create_sessionmaker
+from app.pixiv.oauth import PixivOauthConfig, PixivOauthError, refresh_access_token
+from app.pixiv.refresh_backoff import refresh_backoff_seconds
 
 router = APIRouter()
 
@@ -143,3 +147,118 @@ async def create_token(
         await session.refresh(row)
 
     return {"ok": True, "token_id": str(row.id), "request_id": rid}
+
+
+@router.post("/tokens/{token_id}/test-refresh")
+async def test_refresh_token(
+    token_id: int,
+    request: Request,
+    _claims: dict[str, Any] = Depends(get_admin_claims),
+) -> dict[str, Any]:
+    _ = _claims
+    if token_id <= 0:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid token id", status_code=400)
+
+    rid = get_or_create_request_id(request)
+
+    settings = request.app.state.settings
+    try:
+        encryptor = FieldEncryptor.from_key(settings.field_encryption_key)
+    except Exception as exc:
+        raise ApiError(code=ErrorCode.INTERNAL_ERROR, message="Encryption not configured", status_code=500) from exc
+
+    client_id = (settings.pixiv_oauth_client_id or "").strip()
+    client_secret = (settings.pixiv_oauth_client_secret or "").strip()
+    if not client_id or not client_secret:
+        raise ApiError(code=ErrorCode.INTERNAL_ERROR, message="Pixiv OAuth not configured", status_code=500)
+
+    config = PixivOauthConfig(
+        client_id=client_id,
+        client_secret=client_secret,
+        hash_secret=(settings.pixiv_oauth_hash_secret or "").strip() or None,
+    )
+
+    transport = getattr(request.app.state, "httpx_transport", None)
+
+    engine = request.app.state.engine
+    Session = create_sessionmaker(engine)
+
+    async with Session() as session:
+        row = await session.get(PixivToken, token_id)
+        if row is None:
+            raise ApiError(code=ErrorCode.NOT_FOUND, message="Token not found", status_code=404)
+
+        try:
+            refresh_token = encryptor.decrypt_text(row.refresh_token_enc)
+        except Exception as exc:
+            raise ApiError(code=ErrorCode.INTERNAL_ERROR, message="Invalid stored token", status_code=500) from exc
+
+        now = iso_utc_ms()
+
+        try:
+            token = await refresh_access_token(
+                refresh_token=refresh_token,
+                config=config,
+                transport=transport,
+            )
+        except PixivOauthError as exc:
+            new_error_count = int(row.error_count or 0) + 1
+            backoff_s = refresh_backoff_seconds(attempt=new_error_count, status_code=exc.status_code)
+            backoff_until = (
+                iso_utc_ms(datetime.now(timezone.utc) + timedelta(seconds=backoff_s)) if backoff_s > 0 else None
+            )
+
+            row.error_count = new_error_count
+            row.backoff_until = backoff_until
+            row.last_fail_at = now
+            row.last_error_code = ErrorCode.TOKEN_REFRESH_FAILED.value
+            row.last_error_msg = str(exc)[:500]
+            row.updated_at = now
+
+            await session.commit()
+
+            raise ApiError(
+                code=ErrorCode.TOKEN_REFRESH_FAILED,
+                message="Token refresh failed",
+                status_code=502,
+                details={"upstream_status": exc.status_code or 0, "backoff_until": backoff_until or ""},
+            ) from exc
+        except Exception as exc:
+            new_error_count = int(row.error_count or 0) + 1
+            backoff_s = refresh_backoff_seconds(attempt=new_error_count, status_code=None)
+            backoff_until = (
+                iso_utc_ms(datetime.now(timezone.utc) + timedelta(seconds=backoff_s)) if backoff_s > 0 else None
+            )
+
+            row.error_count = new_error_count
+            row.backoff_until = backoff_until
+            row.last_fail_at = now
+            row.last_error_code = ErrorCode.TOKEN_REFRESH_FAILED.value
+            row.last_error_msg = "exception"
+            row.updated_at = now
+
+            await session.commit()
+
+            raise ApiError(
+                code=ErrorCode.TOKEN_REFRESH_FAILED,
+                message="Token refresh failed",
+                status_code=502,
+                details={"backoff_until": backoff_until or ""},
+            ) from exc
+
+        row.error_count = 0
+        row.backoff_until = None
+        row.last_ok_at = now
+        row.last_fail_at = None
+        row.last_error_code = None
+        row.last_error_msg = None
+        row.updated_at = now
+
+        rotated = token.refresh_token
+        if rotated:
+            row.refresh_token_enc = encryptor.encrypt_text(rotated)
+            row.refresh_token_masked = mask_secret(rotated)
+
+        await session.commit()
+
+    return {"ok": True, "expires_in": int(token.expires_in), "user_id": token.user_id, "request_id": rid}

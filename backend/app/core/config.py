@@ -13,6 +13,9 @@ class Settings:
     field_encryption_key: str
     admin_username: str
     admin_password: str
+    pixiv_oauth_client_id: str
+    pixiv_oauth_client_secret: str
+    pixiv_oauth_hash_secret: str
 
     @property
     def is_prod(self) -> bool:
@@ -35,6 +38,10 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     admin_username = _get(env, "ADMIN_USERNAME", "admin")
     admin_password = _get(env, "ADMIN_PASSWORD", "admin" if app_env != "prod" else "")
 
+    pixiv_oauth_client_id = _get(env, "PIXIV_OAUTH_CLIENT_ID", "")
+    pixiv_oauth_client_secret = _get(env, "PIXIV_OAUTH_CLIENT_SECRET", "")
+    pixiv_oauth_hash_secret = _get(env, "PIXIV_OAUTH_HASH_SECRET", "")
+
     settings = Settings(
         app_env=app_env,
         database_url=database_url,
@@ -42,6 +49,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         field_encryption_key=field_encryption_key,
         admin_username=admin_username,
         admin_password=admin_password,
+        pixiv_oauth_client_id=pixiv_oauth_client_id,
+        pixiv_oauth_client_secret=pixiv_oauth_client_secret,
+        pixiv_oauth_hash_secret=pixiv_oauth_hash_secret,
     )
 
     if settings.is_prod:
