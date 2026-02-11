@@ -5,6 +5,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from app.core.metrics import JOBS_FAILED_TOTAL
 from app.db.session import with_sqlite_busy_retry
 from app.jobs.dispatch import JobDispatcher
 from app.jobs.errors import JobDeferError, JobPermanentError
@@ -134,4 +135,6 @@ async def execute_claimed_job(
         transition = on_job_success(job, now=now_dt)
 
     ok = await _apply_transition(engine, job_id=job.id, worker_id=worker_id, transition=transition)
+    if ok and transition.status in {JobStatus.FAILED, JobStatus.DLQ}:
+        JOBS_FAILED_TOTAL.inc()
     return transition if ok else None
