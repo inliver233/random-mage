@@ -78,7 +78,7 @@ def runtime_config_from_values(values: dict[str, Any]) -> RuntimeConfig:
     proxy_route_mode = defaults.proxy_route_mode
     if isinstance(proxy_route_mode_raw, str):
         candidate = proxy_route_mode_raw.strip().lower()
-        if candidate in {"pixiv_only", "all", "off"}:
+        if candidate in {"pixiv_only", "all", "allowlist", "off"}:
             proxy_route_mode = candidate
 
     random_defaults_raw = values.get("random.defaults")
