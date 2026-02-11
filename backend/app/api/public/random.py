@@ -28,8 +28,10 @@ async def random_image(
     format: str = "image",
     redirect: int = 0,
     attempts: int = 3,
+    seed: str | None = None,
     r18: int = 0,
     r18_strict: int = 1,
+    ai_type: str = "any",
     orientation: str = "any",
     min_width: int = 0,
     min_height: int = 0,
@@ -41,12 +43,27 @@ async def random_image(
     created_from: str | None = None,
     created_to: str | None = None,
 ) -> Any:
-    if format not in {"image", "json"}:
+    if format not in {"image", "json", "simple_json"}:
         raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported format", status_code=400)
     if redirect not in {0, 1}:
         raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported redirect", status_code=400)
     if attempts < 1 or attempts > 10:
         raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported attempts", status_code=400)
+    seed_norm = (seed or "").strip()
+    if seed is not None and not seed_norm:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported seed", status_code=400)
+    if seed_norm and len(seed_norm) > 128:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported seed", status_code=400)
+
+    ai_type_raw = (ai_type or "any").strip().lower()
+    ai_type_i: int | None = None
+    if ai_type_raw in {"", "any"}:
+        ai_type_i = None
+    elif ai_type_raw in {"0", "1"}:
+        ai_type_i = int(ai_type_raw)
+    else:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported ai_type", status_code=400)
+
     if r18 not in {0, 1, 2}:
         raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported r18", status_code=400)
     if r18_strict not in {0, 1}:
@@ -169,6 +186,7 @@ async def random_image(
     pick_kwargs: dict[str, Any] = {
         "r18": r18,
         "r18_strict": bool(r18_strict),
+        "ai_type": ai_type_i,
         "orientation": orientation_map[orientation],
         "min_width": min_width,
         "min_height": min_height,
@@ -182,10 +200,12 @@ async def random_image(
         "fail_cooldown_before": fail_cooldown_before,
     }
 
-    if format == "json" or (format == "image" and redirect == 1):
+    rng = random.Random(seed_norm) if seed_norm else random
+
+    if format in {"json", "simple_json"} or (format == "image" and redirect == 1):
         tags: list[str] = []
         async with Session() as session:
-            image = await pick_random_image(session, r=random.random(), **pick_kwargs)
+            image = await pick_random_image(session, r=rng.random(), **pick_kwargs)
             if image is None:
                 raise _no_match_error()
             if format == "json":
@@ -200,6 +220,33 @@ async def random_image(
 
         runtime = await load_runtime_config(engine)
         origin_url = None if runtime.hide_origin_url_in_public_json else image.original_url
+
+        if format == "simple_json":
+            return {
+                "ok": True,
+                "code": "OK",
+                "request_id": getattr(getattr(request, "state", None), "request_id", None) or "req_unknown",
+                "data": {
+                    "image": {
+                        "id": str(image.id),
+                        "illust_id": str(image.illust_id),
+                        "page_index": image.page_index,
+                        "ext": image.ext,
+                        "width": image.width,
+                        "height": image.height,
+                        "x_restrict": image.x_restrict,
+                        "ai_type": image.ai_type,
+                    },
+                    "urls": {
+                        "proxy": f"/i/{image.id}.{image.ext}",
+                        "origin": origin_url,
+                    },
+                    "debug": {
+                        "attempts_used": 1,
+                        "picked_by": "random_key",
+                    },
+                },
+            }
 
         return {
             "ok": True,
@@ -244,7 +291,7 @@ async def random_image(
         async with Session() as session:
             image = await pick_random_image(
                 session,
-                r=random.random(),
+                r=rng.random(),
                 exclude_image_ids=list(tried_ids),
                 **pick_kwargs,
             )

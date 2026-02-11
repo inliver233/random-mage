@@ -104,6 +104,7 @@ async def pick_random_image(
     r18: int = 0,
     r18_strict: bool = True,
     orientation: int | None = None,
+    ai_type: int | None = None,
     min_width: int = 0,
     min_height: int = 0,
     min_pixels: int = 0,
@@ -139,6 +140,11 @@ async def pick_random_image(
         clauses.append(r18_clause)
     if orientation_clause is not None:
         clauses.append(orientation_clause)
+    if ai_type is not None:
+        ai_type_i = int(ai_type)
+        if ai_type_i not in {0, 1}:
+            raise ValueError("ai_type must be 0, 1, or None")
+        clauses.append(Image.ai_type == ai_type_i)
     if included_tags_clause is not None:
         clauses.append(included_tags_clause)
     if excluded_tags_clause is not None:
