@@ -8,8 +8,9 @@ from fastapi import APIRouter, Depends, Request
 from app.api.admin.deps import get_admin_claims
 from app.core.errors import ApiError, ErrorCode
 from app.core.request_id import get_or_create_request_id
+from app.core.time import iso_utc_ms
 from app.db.models.jobs import JobRow
-from app.db.session import create_sessionmaker
+from app.db.session import create_sessionmaker, with_sqlite_busy_retry
 
 router = APIRouter()
 
@@ -92,3 +93,106 @@ async def list_jobs(
         "request_id": rid,
     }
 
+
+@router.post("/jobs/{job_id}/retry")
+async def retry_job(
+    job_id: int,
+    request: Request,
+    _claims: dict[str, Any] = Depends(get_admin_claims),
+) -> dict[str, Any]:
+    _ = _claims
+    if job_id <= 0:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid job id", status_code=400)
+
+    rid = get_or_create_request_id(request)
+    now = iso_utc_ms()
+
+    engine = request.app.state.engine
+    Session = create_sessionmaker(engine)
+
+    async def _op() -> dict[str, Any]:
+        async with Session() as session:
+            row = await session.get(JobRow, job_id)
+            if row is None:
+                raise ApiError(code=ErrorCode.NOT_FOUND, message="Job not found", status_code=404)
+
+            if row.status == "running":
+                raise ApiError(code=ErrorCode.BAD_REQUEST, message="Job is running", status_code=400)
+
+            row.status = "pending"
+            row.run_after = None
+            row.locked_by = None
+            row.locked_at = None
+            row.updated_at = now
+            await session.commit()
+
+        return {"ok": True, "job_id": str(job_id), "status": "pending", "request_id": rid}
+
+    return await with_sqlite_busy_retry(_op)
+
+
+@router.post("/jobs/{job_id}/cancel")
+async def cancel_job(
+    job_id: int,
+    request: Request,
+    _claims: dict[str, Any] = Depends(get_admin_claims),
+) -> dict[str, Any]:
+    _ = _claims
+    if job_id <= 0:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid job id", status_code=400)
+
+    rid = get_or_create_request_id(request)
+    now = iso_utc_ms()
+
+    engine = request.app.state.engine
+    Session = create_sessionmaker(engine)
+
+    async def _op() -> dict[str, Any]:
+        async with Session() as session:
+            row = await session.get(JobRow, job_id)
+            if row is None:
+                raise ApiError(code=ErrorCode.NOT_FOUND, message="Job not found", status_code=404)
+
+            row.status = "canceled"
+            row.locked_by = None
+            row.locked_at = None
+            row.updated_at = now
+            await session.commit()
+
+        return {"ok": True, "job_id": str(job_id), "status": "canceled", "request_id": rid}
+
+    return await with_sqlite_busy_retry(_op)
+
+
+@router.post("/jobs/{job_id}/move-to-dlq")
+async def move_job_to_dlq(
+    job_id: int,
+    request: Request,
+    _claims: dict[str, Any] = Depends(get_admin_claims),
+) -> dict[str, Any]:
+    _ = _claims
+    if job_id <= 0:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid job id", status_code=400)
+
+    rid = get_or_create_request_id(request)
+    now = iso_utc_ms()
+
+    engine = request.app.state.engine
+    Session = create_sessionmaker(engine)
+
+    async def _op() -> dict[str, Any]:
+        async with Session() as session:
+            row = await session.get(JobRow, job_id)
+            if row is None:
+                raise ApiError(code=ErrorCode.NOT_FOUND, message="Job not found", status_code=404)
+
+            row.status = "dlq"
+            row.run_after = None
+            row.locked_by = None
+            row.locked_at = None
+            row.updated_at = now
+            await session.commit()
+
+        return {"ok": True, "job_id": str(job_id), "status": "dlq", "request_id": rid}
+
+    return await with_sqlite_busy_retry(_op)
