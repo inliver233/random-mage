@@ -46,6 +46,8 @@ async def stream_url(
             raise ApiError(code=ErrorCode.UPSTREAM_403, message="Upstream forbidden", status_code=502)
         if status == 404:
             raise ApiError(code=ErrorCode.UPSTREAM_404, message="Upstream not found", status_code=502)
+        if status == 429:
+            raise ApiError(code=ErrorCode.UPSTREAM_RATE_LIMIT, message="Upstream rate limited", status_code=502)
         raise ApiError(code=ErrorCode.UPSTREAM_STREAM_ERROR, message="Upstream error", status_code=502)
 
     media_type = upstream.headers.get("content-type") or "application/octet-stream"

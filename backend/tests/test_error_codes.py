@@ -3,9 +3,11 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import httpx
 from fastapi.testclient import TestClient
 
-from app.core.errors import ErrorCode
+from app.core.errors import ApiError, ErrorCode
+from app.core.http_stream import stream_url
 from app.db.models.base import Base
 from app.db.models.images import Image
 from app.db.session import create_sessionmaker
@@ -158,3 +160,27 @@ def test_error_codes_upstream_403_defined_and_used() -> None:
 def test_error_codes_upstream_404_defined_and_used() -> None:
     assert ErrorCode.UPSTREAM_404.value == "UPSTREAM_404"
     assert _references_error_code("UPSTREAM_404") is True
+
+
+def test_error_codes_upstream_rate_limit_defined_and_used() -> None:
+    assert ErrorCode.UPSTREAM_RATE_LIMIT.value == "UPSTREAM_RATE_LIMIT"
+    assert _references_error_code("UPSTREAM_RATE_LIMIT") is True
+
+
+def test_error_codes_upstream_rate_limit_raised_on_429() -> None:
+    transport = httpx.MockTransport(lambda req: httpx.Response(429, request=req))
+
+    async def _run() -> None:
+        try:
+            await stream_url(
+                "https://example.test/429",
+                transport=transport,
+                cache_control="no-store",
+            )
+        except ApiError as exc:
+            assert exc.code == ErrorCode.UPSTREAM_RATE_LIMIT
+            assert exc.status_code == 502
+        else:
+            raise AssertionError("expected ApiError")
+
+    asyncio.run(_run())
