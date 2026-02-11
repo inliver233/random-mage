@@ -148,3 +148,8 @@ def test_error_codes_no_match_defined_and_used() -> None:
 def test_error_codes_upstream_stream_error_defined_and_used() -> None:
     assert ErrorCode.UPSTREAM_STREAM_ERROR.value == "UPSTREAM_STREAM_ERROR"
     assert _references_error_code("UPSTREAM_STREAM_ERROR") is True
+
+
+def test_error_codes_upstream_403_defined_and_used() -> None:
+    assert ErrorCode.UPSTREAM_403.value == "UPSTREAM_403"
+    assert _references_error_code("UPSTREAM_403") is True
