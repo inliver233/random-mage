@@ -4,6 +4,7 @@ from typing import Any
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Request
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import aliased
 
 from app.api.admin.deps import get_admin_claims
@@ -12,11 +13,77 @@ from app.core.request_id import get_or_create_request_id
 from app.core.time import iso_utc_ms
 from app.db.models.pixiv_tokens import PixivToken
 from app.db.models.proxy_endpoints import ProxyEndpoint
+from app.db.models.proxy_pool_endpoints import ProxyPoolEndpoint
 from app.db.models.proxy_pools import ProxyPool
 from app.db.models.token_proxy_bindings import TokenProxyBinding
-from app.db.session import create_sessionmaker
+from app.db.session import create_sessionmaker, with_sqlite_busy_retry
 
 router = APIRouter()
+
+
+def _fnv1a64(text: str) -> int:
+    h = 14695981039346656037
+    prime = 1099511628211
+    for b in text.encode("utf-8"):
+        h ^= b
+        h = (h * prime) & 0xFFFFFFFFFFFFFFFF
+    return h
+
+
+def _rendezvous_proxy_order(*, token_id: int, proxy_ids: list[int], salt: str) -> list[int]:
+    scored = [(_fnv1a64(f"{token_id}|{pid}|{salt}"), pid) for pid in proxy_ids]
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    return [pid for _, pid in scored]
+
+
+def _compute_primary_assignments(
+    *,
+    token_ids: list[int],
+    proxy_ids: list[int],
+    max_tokens_per_proxy: int,
+    salt: str,
+) -> dict[int, int]:
+    remaining = {pid: int(max_tokens_per_proxy) for pid in proxy_ids}
+    out: dict[int, int] = {}
+    for token_id in token_ids:
+        for pid in _rendezvous_proxy_order(token_id=token_id, proxy_ids=proxy_ids, salt=salt):
+            if remaining.get(pid, 0) > 0:
+                out[token_id] = pid
+                remaining[pid] -= 1
+                break
+    return out
+
+
+async def _load_recompute_json(request: Request) -> dict[str, Any]:
+    try:
+        data = await request.json()
+    except Exception as exc:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid JSON body", status_code=400) from exc
+
+    if not isinstance(data, dict):
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid JSON body", status_code=400)
+
+    try:
+        pool_id = int(data.get("pool_id"))
+    except Exception as exc:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid pool_id", status_code=400) from exc
+    if pool_id <= 0:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid pool_id", status_code=400)
+
+    raw_max = data.get("max_tokens_per_proxy", 2)
+    try:
+        max_tokens_per_proxy = int(raw_max)
+    except Exception as exc:
+        raise ApiError(
+            code=ErrorCode.BAD_REQUEST,
+            message="Invalid max_tokens_per_proxy",
+            status_code=400,
+        ) from exc
+
+    if max_tokens_per_proxy <= 0 or max_tokens_per_proxy > 1000:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid max_tokens_per_proxy", status_code=400)
+
+    return {"pool_id": pool_id, "max_tokens_per_proxy": max_tokens_per_proxy}
 
 
 @router.get("/bindings")
@@ -94,3 +161,96 @@ async def list_bindings(
 
     return {"ok": True, "items": items, "request_id": rid}
 
+
+@router.post("/bindings/recompute")
+async def recompute_bindings(
+    request: Request,
+    _claims: dict[str, Any] = Depends(get_admin_claims),
+) -> dict[str, Any]:
+    _ = _claims
+    rid = get_or_create_request_id(request)
+    now = iso_utc_ms()
+    body = await _load_recompute_json(request)
+
+    pool_id = int(body["pool_id"])
+    max_tokens_per_proxy = int(body["max_tokens_per_proxy"])
+
+    engine = request.app.state.engine
+    Session = create_sessionmaker(engine)
+
+    async def _op() -> dict[str, Any]:
+        async with Session() as session:
+            pool = await session.get(ProxyPool, pool_id)
+            if pool is None:
+                raise ApiError(code=ErrorCode.NOT_FOUND, message="Proxy pool not found", status_code=404)
+
+            proxy_ids = (
+                (
+                    await session.execute(
+                        sa.select(ProxyPoolEndpoint.endpoint_id)
+                        .join(ProxyEndpoint, ProxyEndpoint.id == ProxyPoolEndpoint.endpoint_id)
+                        .where(ProxyPoolEndpoint.pool_id == pool_id)
+                        .where(ProxyPoolEndpoint.enabled == 1)
+                        .where(ProxyEndpoint.enabled == 1)
+                        .order_by(ProxyPoolEndpoint.endpoint_id.asc())
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if not proxy_ids:
+                raise ApiError(code=ErrorCode.BAD_REQUEST, message="No enabled proxies in pool", status_code=400)
+
+            token_ids = (
+                (await session.execute(sa.select(PixivToken.id).order_by(PixivToken.id.asc())))
+                .scalars()
+                .all()
+            )
+            if not token_ids:
+                return {"ok": True, "pool_id": str(pool_id), "recomputed": 0, "request_id": rid}
+
+            capacity = len(proxy_ids) * max_tokens_per_proxy
+            if len(token_ids) > capacity:
+                raise ApiError(
+                    code=ErrorCode.BAD_REQUEST,
+                    message="Insufficient proxy capacity",
+                    status_code=400,
+                    details={
+                        "token_count": len(token_ids),
+                        "proxy_count": len(proxy_ids),
+                        "max_tokens_per_proxy": max_tokens_per_proxy,
+                    },
+                )
+
+            salt = f"pool:{pool_id}"
+            assignments = _compute_primary_assignments(
+                token_ids=token_ids,
+                proxy_ids=proxy_ids,
+                max_tokens_per_proxy=max_tokens_per_proxy,
+                salt=salt,
+            )
+
+            for token_id in token_ids:
+                primary_proxy_id = assignments.get(token_id)
+                if primary_proxy_id is None:
+                    raise ApiError(code=ErrorCode.INTERNAL_ERROR, message="Binding recompute failed", status_code=500)
+
+                stmt = sqlite_insert(TokenProxyBinding).values(
+                    token_id=int(token_id),
+                    pool_id=int(pool_id),
+                    primary_proxy_id=int(primary_proxy_id),
+                    override_proxy_id=None,
+                    override_expires_at=None,
+                    updated_at=now,
+                )
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=[TokenProxyBinding.token_id, TokenProxyBinding.pool_id],
+                    set_={"primary_proxy_id": int(primary_proxy_id), "updated_at": now},
+                )
+                await session.execute(stmt)
+
+            await session.commit()
+
+        return {"ok": True, "pool_id": str(pool_id), "recomputed": len(token_ids), "request_id": rid}
+
+    return await with_sqlite_busy_retry(_op)
