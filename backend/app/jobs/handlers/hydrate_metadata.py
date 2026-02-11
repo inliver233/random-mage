@@ -17,6 +17,7 @@ from app.core.config import load_settings
 from app.core.crypto import FieldEncryptor, mask_secret
 from app.core.errors import ErrorCode
 from app.core.failover import classify_pixiv_rate_limit, pixiv_rate_limit_backoff_seconds
+from app.core.metrics import TOKEN_REFRESH_FAIL_TOTAL
 from app.core.time import iso_utc_ms
 from app.db.models.image_tags import ImageTag
 from app.db.models.images import Image
@@ -523,6 +524,7 @@ def build_hydrate_metadata_handler(
             try:
                 access_token = await _get_access_token(token_id, now_dt=now_dt)
             except PixivOauthError as exc:
+                TOKEN_REFRESH_FAIL_TOTAL.inc()
                 attempt = 0
                 async with Session() as session:
                     row = await session.get(PixivToken, int(token_id))
@@ -540,6 +542,7 @@ def build_hydrate_metadata_handler(
                 last_exc = exc
                 continue
             except Exception as exc:
+                TOKEN_REFRESH_FAIL_TOTAL.inc()
                 attempt = 0
                 async with Session() as session:
                     row = await session.get(PixivToken, int(token_id))

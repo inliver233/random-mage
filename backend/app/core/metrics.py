@@ -73,6 +73,11 @@ JOBS_FAILED_TOTAL = Counter(
     "Total jobs transitioned to failed/dlq status.",
 )
 
+TOKEN_REFRESH_FAIL_TOTAL = Counter(
+    "new_pixiv_token_refresh_fail_total",
+    "Total token refresh failures.",
+)
+
 JOBS_STATUS_COUNT = Gauge(
     "new_pixiv_jobs_status_count",
     "Current jobs count by status (from SQLite).",
@@ -120,6 +125,7 @@ def _init_labelsets() -> None:
     UPSTREAM_STREAM_ERRORS_TOTAL.inc(0)
     JOBS_CLAIM_TOTAL.inc(0)
     JOBS_FAILED_TOTAL.inc(0)
+    TOKEN_REFRESH_FAIL_TOTAL.inc(0)
     for status in JOB_STATUSES:
         JOBS_STATUS_COUNT.labels(status=status).set(0)
     for state in PROXY_STATES:
