@@ -143,3 +143,8 @@ def test_error_codes_internal_error_defined_and_used() -> None:
 def test_error_codes_no_match_defined_and_used() -> None:
     assert ErrorCode.NO_MATCH.value == "NO_MATCH"
     assert _references_error_code("NO_MATCH") is True
+
+
+def test_error_codes_upstream_stream_error_defined_and_used() -> None:
+    assert ErrorCode.UPSTREAM_STREAM_ERROR.value == "UPSTREAM_STREAM_ERROR"
+    assert _references_error_code("UPSTREAM_STREAM_ERROR") is True
