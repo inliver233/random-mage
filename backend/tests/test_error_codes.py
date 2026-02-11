@@ -5,10 +5,24 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from app.core.errors import ErrorCode
 from app.db.models.base import Base
 from app.db.models.images import Image
 from app.db.session import create_sessionmaker
 from app.main import create_app
+
+
+def _references_error_code(name: str) -> bool:
+    backend_dir = Path(__file__).resolve().parents[1]
+    app_dir = backend_dir / "app"
+    errors_py = app_dir / "core" / "errors.py"
+    needle = f"ErrorCode.{name}"
+    for path in app_dir.rglob("*.py"):
+        if path == errors_py:
+            continue
+        if needle in path.read_text(encoding="utf-8", errors="ignore"):
+            return True
+    return False
 
 
 def test_error_codes_random_json_success_is_http_200(tmp_path: Path, monkeypatch) -> None:
@@ -99,3 +113,8 @@ def test_error_codes_random_json_no_match_is_http_404(tmp_path: Path, monkeypatc
         body = resp.json()
         assert body["ok"] is False
         assert body["code"] == "NO_MATCH"
+
+
+def test_error_codes_bad_request_defined_and_used() -> None:
+    assert ErrorCode.BAD_REQUEST.value == "BAD_REQUEST"
+    assert _references_error_code("BAD_REQUEST") is True
