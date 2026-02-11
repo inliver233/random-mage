@@ -83,6 +83,7 @@ export function DashboardPage() {
         <Button onClick={() => proxies.refetch()} loading={proxies.isFetching}>
           刷新代理
         </Button>
+        <Button onClick={() => navigate("/admin/random")}>打开 Playground</Button>
         <Button onClick={() => createHydration.mutate()} loading={createHydration.isPending}>
           创建补全任务
         </Button>

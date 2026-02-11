@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DashboardPage } from "./DashboardPage";
 import { ImportPage } from "./ImportPage";
+import { PlaygroundPage } from "./PlaygroundPage";
 import { TokensPage } from "./TokensPage";
 
 function makeClient() {
@@ -111,6 +112,7 @@ describe("DashboardPage", () => {
             <Route path="/admin" element={<DashboardPage />} />
             <Route path="/admin/import" element={<ImportPage />} />
             <Route path="/admin/tokens" element={<TokensPage />} />
+            <Route path="/admin/random" element={<PlaygroundPage />} />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>,
@@ -130,6 +132,7 @@ describe("DashboardPage", () => {
             <Route path="/admin" element={<DashboardPage />} />
             <Route path="/admin/import" element={<ImportPage />} />
             <Route path="/admin/tokens" element={<TokensPage />} />
+            <Route path="/admin/random" element={<PlaygroundPage />} />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>,
@@ -149,6 +152,7 @@ describe("DashboardPage", () => {
             <Route path="/admin" element={<DashboardPage />} />
             <Route path="/admin/import" element={<ImportPage />} />
             <Route path="/admin/tokens" element={<TokensPage />} />
+            <Route path="/admin/random" element={<PlaygroundPage />} />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>,
@@ -170,6 +174,7 @@ describe("DashboardPage", () => {
             <Route path="/admin" element={<DashboardPage />} />
             <Route path="/admin/import" element={<ImportPage />} />
             <Route path="/admin/tokens" element={<TokensPage />} />
+            <Route path="/admin/random" element={<PlaygroundPage />} />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>,
@@ -189,6 +194,7 @@ describe("DashboardPage", () => {
             <Route path="/admin" element={<DashboardPage />} />
             <Route path="/admin/import" element={<ImportPage />} />
             <Route path="/admin/tokens" element={<TokensPage />} />
+            <Route path="/admin/random" element={<PlaygroundPage />} />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>,
@@ -197,5 +203,25 @@ describe("DashboardPage", () => {
     expect(await screen.findByText("request_id: req_proxies_1")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /刷\s*新\s*代\s*理/ }));
     expect(await screen.findByText("request_id: req_proxies_2")).toBeInTheDocument();
+  });
+
+  it("navigates to playground", async () => {
+    const qc = makeClient();
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={["/admin"]}>
+          <Routes>
+            <Route path="/admin" element={<DashboardPage />} />
+            <Route path="/admin/import" element={<ImportPage />} />
+            <Route path="/admin/tokens" element={<TokensPage />} />
+            <Route path="/admin/random" element={<PlaygroundPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("Settings")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /打\s*开\s*Playground/ }));
+    expect(await screen.findByText("Random Playground")).toBeInTheDocument();
   });
 });
