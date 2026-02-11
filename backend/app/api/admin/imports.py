@@ -281,3 +281,76 @@ async def rollback_import(
         "updated": updated,
         "request_id": rid,
     }
+
+
+@router.get("/imports/{import_id}")
+async def get_import(
+    import_id: int,
+    request: Request,
+    _claims: dict[str, Any] = Depends(get_admin_claims),
+) -> dict[str, Any]:
+    _ = _claims
+    if import_id <= 0:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid import id", status_code=400)
+
+    rid = get_or_create_request_id(request)
+
+    engine = request.app.state.engine
+    Session = create_sessionmaker(engine)
+
+    async with Session() as session:
+        imp = await session.get(Import, import_id)
+        if imp is None:
+            raise ApiError(code=ErrorCode.NOT_FOUND, message="Import not found", status_code=404)
+
+        job = (
+            (
+                await session.execute(
+                    sa.select(JobRow)
+                    .where(JobRow.ref_type == "import", JobRow.ref_id == str(import_id))
+                    .order_by(JobRow.id.desc())
+                    .limit(1)
+                )
+            )
+            .scalars()
+            .first()
+        )
+
+    detail: dict[str, Any] = {}
+    if imp.detail_json:
+        try:
+            parsed = json.loads(imp.detail_json)
+            if isinstance(parsed, dict):
+                detail = parsed
+        except Exception:
+            detail = {}
+
+    return {
+        "ok": True,
+        "item": {
+            "import": {
+                "id": str(imp.id),
+                "created_at": imp.created_at,
+                "created_by": imp.created_by,
+                "source": imp.source,
+                "total": int(imp.total or 0),
+                "accepted": int(imp.accepted or 0),
+                "success": int(imp.success or 0),
+                "failed": int(imp.failed or 0),
+            },
+            "job": (
+                {
+                    "id": str(job.id),
+                    "type": job.type,
+                    "status": job.status,
+                    "attempt": job.attempt,
+                    "max_attempts": job.max_attempts,
+                    "last_error": job.last_error,
+                }
+                if job is not None
+                else None
+            ),
+            "detail": detail,
+        },
+        "request_id": rid,
+    }
