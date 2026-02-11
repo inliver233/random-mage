@@ -128,3 +128,8 @@ def test_error_codes_unauthorized_defined_and_used() -> None:
 def test_error_codes_forbidden_defined_and_used() -> None:
     assert ErrorCode.FORBIDDEN.value == "FORBIDDEN"
     assert _references_error_code("FORBIDDEN") is True
+
+
+def test_error_codes_not_found_defined_and_used() -> None:
+    assert ErrorCode.NOT_FOUND.value == "NOT_FOUND"
+    assert _references_error_code("NOT_FOUND") is True
