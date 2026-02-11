@@ -5,9 +5,11 @@ from typing import Any
 
 from fastapi import APIRouter, Request
 
+from app.api.admin.deps import get_admin_claims
 from app.core.errors import ApiError, ErrorCode
 from app.core.request_id import get_or_create_request_id
 from app.core.security import create_jwt
+from fastapi import Depends
 
 router = APIRouter()
 
@@ -41,3 +43,9 @@ async def login(request: Request) -> dict[str, Any]:
     rid = get_or_create_request_id(request)
     return {"ok": True, "token": token, "request_id": rid}
 
+
+@router.post("/logout")
+async def logout(request: Request, _claims: dict[str, Any] = Depends(get_admin_claims)) -> dict[str, Any]:
+    _ = _claims
+    rid = get_or_create_request_id(request)
+    return {"ok": True, "request_id": rid}
