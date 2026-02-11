@@ -1,0 +1,45 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { fireEvent, render, screen } from "@testing-library/react";
+import React from "react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { PlaygroundPage } from "./PlaygroundPage";
+
+function makeClient() {
+  return new QueryClient({ defaultOptions: { queries: { retry: false } } });
+}
+
+describe("PlaygroundPage", () => {
+  beforeEach(() => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/random") && url.includes("format=json")) {
+          return new Response(
+            JSON.stringify({ ok: true, request_id: "req_play", data: { urls: { proxy: "/i/1.jpg" } } }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return new Response(JSON.stringify({ ok: false, code: "NOT_FOUND", message: "not found", request_id: "req_x", details: {} }), {
+          status: 404,
+          headers: { "Content-Type": "application/json" },
+        });
+      }),
+    );
+  });
+
+  it("runs and shows request_id", async () => {
+    const qc = makeClient();
+    render(
+      <QueryClientProvider client={qc}>
+        <PlaygroundPage />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("Random Playground")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    expect(await screen.findByText(/request_id:\s*req_play/)).toBeInTheDocument();
+  });
+});
+

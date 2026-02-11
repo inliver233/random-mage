@@ -8,6 +8,7 @@ import { ImportPage } from "../pages/ImportPage";
 import { ImportDetailPage } from "../pages/ImportDetailPage";
 import { ImagesPage } from "../pages/ImagesPage";
 import { LoginPage } from "../pages/LoginPage";
+import { PlaygroundPage } from "../pages/PlaygroundPage";
 import { PlaceholderPage } from "../pages/PlaceholderPage";
 
 export function App() {
@@ -21,6 +22,7 @@ export function App() {
             <Route index element={<DashboardPage />} />
             <Route path="import" element={<ImportPage />} />
             <Route path="import/:id" element={<ImportDetailPage />} />
+            <Route path="random" element={<PlaygroundPage />} />
             <Route path="images" element={<ImagesPage />} />
             <Route path="*" element={<PlaceholderPage title="Not Found" />} />
           </Route>
