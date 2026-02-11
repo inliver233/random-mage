@@ -13,6 +13,7 @@ import { TagsPage } from "../pages/TagsPage";
 import { AuthorsPage } from "../pages/AuthorsPage";
 import { TokensPage } from "../pages/TokensPage";
 import { ProxiesPage } from "../pages/ProxiesPage";
+import { BindingsPage } from "../pages/BindingsPage";
 import { PlaceholderPage } from "../pages/PlaceholderPage";
 
 export function App() {
@@ -32,6 +33,7 @@ export function App() {
             <Route path="authors" element={<AuthorsPage />} />
             <Route path="tokens" element={<TokensPage />} />
             <Route path="proxies" element={<ProxiesPage />} />
+            <Route path="bindings" element={<BindingsPage />} />
             <Route path="*" element={<PlaceholderPage title="Not Found" />} />
           </Route>
           <Route path="*" element={<PlaceholderPage title="Not Found" />} />
