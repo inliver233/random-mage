@@ -254,3 +254,8 @@ def test_error_codes_unsupported_url_returned_in_import_errors(tmp_path: Path, m
         assert body["ok"] is True
         assert body["accepted"] == 0
         assert body["errors"][0]["code"] == "UNSUPPORTED_URL"
+
+
+def test_error_codes_token_refresh_failed_defined_and_used() -> None:
+    assert ErrorCode.TOKEN_REFRESH_FAILED.value == "TOKEN_REFRESH_FAILED"
+    assert _references_error_code("TOKEN_REFRESH_FAILED") is True
