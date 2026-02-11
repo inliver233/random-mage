@@ -80,6 +80,9 @@ export function DashboardPage() {
           去导入
         </Button>
         <Button onClick={() => navigate("/admin/tokens")}>去添加 Token</Button>
+        <Button onClick={() => proxies.refetch()} loading={proxies.isFetching}>
+          刷新代理
+        </Button>
         <Button onClick={() => createHydration.mutate()} loading={createHydration.isPending}>
           创建补全任务
         </Button>

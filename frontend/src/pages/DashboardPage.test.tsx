@@ -19,6 +19,7 @@ describe("DashboardPage", () => {
   });
 
   beforeEach(() => {
+    let proxiesCalls = 0;
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
@@ -75,7 +76,8 @@ describe("DashboardPage", () => {
           );
         }
         if (url.endsWith("/admin/api/proxies/endpoints")) {
-          return new Response(JSON.stringify({ ok: true, items: [{}], request_id: "req_proxies" }), {
+          proxiesCalls += 1;
+          return new Response(JSON.stringify({ ok: true, items: [{}], request_id: `req_proxies_${proxiesCalls}` }), {
             status: 200,
             headers: { "Content-Type": "application/json" },
           });
@@ -176,5 +178,24 @@ describe("DashboardPage", () => {
     expect(await screen.findByText("Settings")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /去\s*添\s*加\s*Token/ }));
     expect(await screen.findByRole("button", { name: /新\s*增\s*Token/ })).toBeInTheDocument();
+  });
+
+  it("refreshes proxies", async () => {
+    const qc = makeClient();
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={["/admin"]}>
+          <Routes>
+            <Route path="/admin" element={<DashboardPage />} />
+            <Route path="/admin/import" element={<ImportPage />} />
+            <Route path="/admin/tokens" element={<TokensPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("request_id: req_proxies_1")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /刷\s*新\s*代\s*理/ }));
+    expect(await screen.findByText("request_id: req_proxies_2")).toBeInTheDocument();
   });
 });
