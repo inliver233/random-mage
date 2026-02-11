@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import sqlalchemy as sa
@@ -84,6 +85,36 @@ async def _load_recompute_json(request: Request) -> dict[str, Any]:
         raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid max_tokens_per_proxy", status_code=400)
 
     return {"pool_id": pool_id, "max_tokens_per_proxy": max_tokens_per_proxy}
+
+
+async def _load_override_json(request: Request) -> dict[str, Any]:
+    try:
+        data = await request.json()
+    except Exception as exc:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid JSON body", status_code=400) from exc
+
+    if not isinstance(data, dict):
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid JSON body", status_code=400)
+
+    try:
+        override_proxy_id = int(data.get("override_proxy_id"))
+    except Exception as exc:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid override_proxy_id", status_code=400) from exc
+    if override_proxy_id <= 0:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid override_proxy_id", status_code=400)
+
+    try:
+        ttl_ms = int(data.get("ttl_ms"))
+    except Exception as exc:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid ttl_ms", status_code=400) from exc
+    if ttl_ms <= 0 or ttl_ms > 30 * 24 * 60 * 60 * 1000:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid ttl_ms", status_code=400)
+
+    reason = str(data.get("reason") or "").strip()
+    if reason and len(reason) > 200:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid reason", status_code=400)
+
+    return {"override_proxy_id": override_proxy_id, "ttl_ms": ttl_ms, "reason": reason}
 
 
 @router.get("/bindings")
@@ -252,5 +283,67 @@ async def recompute_bindings(
             await session.commit()
 
         return {"ok": True, "pool_id": str(pool_id), "recomputed": len(token_ids), "request_id": rid}
+
+    return await with_sqlite_busy_retry(_op)
+
+
+@router.post("/bindings/{binding_id}/override")
+async def set_binding_override(
+    binding_id: int,
+    request: Request,
+    _claims: dict[str, Any] = Depends(get_admin_claims),
+) -> dict[str, Any]:
+    _ = _claims
+    if binding_id <= 0:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid binding id", status_code=400)
+
+    rid = get_or_create_request_id(request)
+    now = iso_utc_ms()
+    body = await _load_override_json(request)
+
+    override_proxy_id = int(body["override_proxy_id"])
+    ttl_ms = int(body["ttl_ms"])
+    _reason = str(body["reason"] or "")
+
+    expires_at = iso_utc_ms(datetime.now(timezone.utc) + timedelta(milliseconds=ttl_ms))
+
+    engine = request.app.state.engine
+    Session = create_sessionmaker(engine)
+
+    async def _op() -> dict[str, Any]:
+        async with Session() as session:
+            binding = await session.get(TokenProxyBinding, binding_id)
+            if binding is None:
+                raise ApiError(code=ErrorCode.NOT_FOUND, message="Binding not found", status_code=404)
+
+            proxy = await session.get(ProxyEndpoint, override_proxy_id)
+            if proxy is None:
+                raise ApiError(code=ErrorCode.NOT_FOUND, message="Proxy endpoint not found", status_code=404)
+            if not bool(proxy.enabled):
+                raise ApiError(code=ErrorCode.BAD_REQUEST, message="Proxy endpoint disabled", status_code=400)
+
+            in_pool = (
+                await session.execute(
+                    sa.select(ProxyPoolEndpoint)
+                    .where(ProxyPoolEndpoint.pool_id == int(binding.pool_id))
+                    .where(ProxyPoolEndpoint.endpoint_id == int(override_proxy_id))
+                    .where(ProxyPoolEndpoint.enabled == 1)
+                )
+            ).scalars().first()
+            if in_pool is None:
+                raise ApiError(code=ErrorCode.BAD_REQUEST, message="Override proxy not in pool", status_code=400)
+
+            binding.override_proxy_id = int(override_proxy_id)
+            binding.override_expires_at = expires_at
+            binding.updated_at = now
+            await session.commit()
+
+        return {
+            "ok": True,
+            "binding_id": str(binding_id),
+            "override_proxy_id": str(override_proxy_id),
+            "override_expires_at": expires_at,
+            "request_id": rid,
+        }
 
     return await with_sqlite_busy_retry(_op)
