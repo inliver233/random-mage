@@ -40,6 +40,11 @@ def set_request_id_header(response: Any, request_id: str) -> None:
 
 
 def get_or_create_request_id(request: Any) -> str:
+    state = getattr(request, "state", None)
+    if state is not None:
+        rid = getattr(state, "request_id", None)
+        if rid:
+            return str(rid)
     headers = getattr(request, "headers", None)
     rid = get_request_id_from_headers(headers)
     return rid or new_request_id()
@@ -60,4 +65,3 @@ def build_request_id_middleware() -> Any | None:
             return response
 
     return RequestIdMiddleware
-

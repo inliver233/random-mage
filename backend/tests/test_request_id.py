@@ -28,6 +28,11 @@ def test_get_or_create_request_id_uses_header() -> None:
     assert get_or_create_request_id(req) == "req_x"
 
 
+def test_get_or_create_request_id_uses_state_when_present() -> None:
+    req = SimpleNamespace(headers={}, state=SimpleNamespace(request_id="req_state"))
+    assert get_or_create_request_id(req) == "req_state"
+
+
 def test_set_request_id_on_state_and_header() -> None:
     req = SimpleNamespace(headers={})
     res = SimpleNamespace(headers={})
@@ -35,4 +40,3 @@ def test_set_request_id_on_state_and_header() -> None:
     set_request_id_header(res, "req_abc")
     assert req.state.request_id == "req_abc"
     assert res.headers[REQUEST_ID_HEADER] == "req_abc"
-
