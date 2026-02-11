@@ -4,14 +4,18 @@ import asyncio
 from pathlib import Path
 
 import httpx
+from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
 from app.core.errors import ApiError, ErrorCode
 from app.core.http_stream import stream_url
 from app.core.security import create_jwt
+from app.db.engine import create_engine
 from app.db.models.base import Base
 from app.db.models.images import Image
 from app.db.session import create_sessionmaker
+from app.jobs.errors import JobDeferError
+from app.jobs.handlers.hydrate_metadata import build_hydrate_metadata_handler
 from app.main import create_app
 
 
@@ -264,3 +268,35 @@ def test_error_codes_token_refresh_failed_defined_and_used() -> None:
 def test_error_codes_token_backoff_defined_and_used() -> None:
     assert ErrorCode.TOKEN_BACKOFF.value == "TOKEN_BACKOFF"
     assert _references_error_code("TOKEN_BACKOFF") is True
+
+
+def test_error_codes_no_token_available_defined_and_used() -> None:
+    assert ErrorCode.NO_TOKEN_AVAILABLE.value == "NO_TOKEN_AVAILABLE"
+    assert _references_error_code("NO_TOKEN_AVAILABLE") is True
+
+
+def test_error_codes_no_token_available_defers_hydrate_job(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "error_codes_no_token_available.db"
+    engine = create_engine("sqlite+aiosqlite:///" + db_path.as_posix())
+
+    field_key = Fernet.generate_key().decode("ascii")
+    monkeypatch.setenv("APP_ENV", "dev")
+    monkeypatch.setenv("FIELD_ENCRYPTION_KEY", field_key)
+    monkeypatch.setenv("PIXIV_OAUTH_CLIENT_ID", "cid_test")
+    monkeypatch.setenv("PIXIV_OAUTH_CLIENT_SECRET", "csec_test")
+    monkeypatch.setenv("PIXIV_OAUTH_HASH_SECRET", "hsec_test")
+
+    async def _run() -> None:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        handler = build_hydrate_metadata_handler(engine)
+        try:
+            await handler({"type": "hydrate_metadata", "payload_json": '{"illust_id": 123}', "ref_id": ""})
+        except JobDeferError as exc:
+            assert ErrorCode.NO_TOKEN_AVAILABLE.value in str(exc)
+        else:
+            raise AssertionError("expected JobDeferError")
+        await engine.dispose()
+
+    asyncio.run(_run())

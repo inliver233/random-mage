@@ -251,7 +251,10 @@ def build_hydrate_metadata_handler(
             if retry_at is None:
                 retry_at = now_epoch + 60.0
             retry_dt = datetime.fromtimestamp(float(retry_at), tz=timezone.utc)
-            raise JobDeferError("No eligible token available", run_after=iso_utc_ms(retry_dt)) from exc
+            raise JobDeferError(
+                f"{ErrorCode.NO_TOKEN_AVAILABLE.value}: No eligible token available",
+                run_after=iso_utc_ms(retry_dt),
+            ) from exc
 
     async def _get_refresh_token(token_id: int) -> str:
         async with Session() as session:
