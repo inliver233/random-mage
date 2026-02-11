@@ -184,3 +184,8 @@ def test_error_codes_upstream_rate_limit_raised_on_429() -> None:
             raise AssertionError("expected ApiError")
 
     asyncio.run(_run())
+
+
+def test_error_codes_invalid_upload_type_defined_and_used() -> None:
+    assert ErrorCode.INVALID_UPLOAD_TYPE.value == "INVALID_UPLOAD_TYPE"
+    assert _references_error_code("INVALID_UPLOAD_TYPE") is True
