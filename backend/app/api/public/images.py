@@ -13,6 +13,7 @@ from app.core.request_id import get_or_create_request_id, set_request_id_header,
 from app.db.images_get import get_image_by_id
 from app.db.images_list import list_images as db_list_images
 from app.db.session import create_sessionmaker
+from app.db.tags_get import get_tag_names_for_image
 
 router = APIRouter()
 
@@ -171,6 +172,56 @@ async def list_images(
             "ok": True,
             "items": items,
             "next_cursor": str(next_cursor) if next_cursor is not None else "",
+            "request_id": rid,
+        },
+    )
+    set_request_id_header(resp, rid)
+    return resp
+
+
+@router.get("/images/{image_id}")
+async def get_image(
+    request: Request,
+    image_id: int,
+) -> Any:
+    if int(image_id) <= 0:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported image_id", status_code=400)
+
+    engine = request.app.state.engine
+    Session = create_sessionmaker(engine)
+
+    async with Session() as session:
+        image = await get_image_by_id(session, image_id=image_id)
+        if image is None:
+            raise ApiError(code=ErrorCode.NOT_FOUND, message="Image not found", status_code=404)
+        tags = await get_tag_names_for_image(session, image_id=image.id)
+
+    rid = get_or_create_request_id(request)
+    set_request_id_on_state(request, rid)
+
+    resp = JSONResponse(
+        status_code=200,
+        content={
+            "ok": True,
+            "item": {
+                "image": {
+                    "id": str(image.id),
+                    "illust_id": str(image.illust_id),
+                    "page_index": image.page_index,
+                    "ext": image.ext,
+                    "width": image.width,
+                    "height": image.height,
+                    "x_restrict": image.x_restrict,
+                    "ai_type": image.ai_type,
+                    "user": {
+                        "id": str(image.user_id) if image.user_id is not None else None,
+                        "name": image.user_name,
+                    },
+                    "title": image.title,
+                    "created_at_pixiv": image.created_at_pixiv,
+                },
+                "tags": tags,
+            },
             "request_id": rid,
         },
     )
