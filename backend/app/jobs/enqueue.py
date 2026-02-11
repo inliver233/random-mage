@@ -5,6 +5,7 @@ import json
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from app.core.metrics import RANDOM_OPPORTUNISTIC_HYDRATE_ENQUEUED_TOTAL
 from app.db.models.jobs import JobRow
 from app.db.session import create_sessionmaker, with_sqlite_busy_retry
 
@@ -56,5 +57,7 @@ async def enqueue_opportunistic_hydrate_metadata(
             await session.commit()
             return int(job.id)
 
-    return await with_sqlite_busy_retry(_op)
-
+    job_id = await with_sqlite_busy_retry(_op)
+    if job_id is not None:
+        RANDOM_OPPORTUNISTIC_HYDRATE_ENQUEUED_TOTAL.inc()
+    return job_id

@@ -41,6 +41,11 @@ RANDOM_NO_MATCH_TOTAL = Counter(
     "Total /random NO_MATCH responses.",
 )
 
+RANDOM_OPPORTUNISTIC_HYDRATE_ENQUEUED_TOTAL = Counter(
+    "new_pixiv_random_opportunistic_hydrate_enqueued_total",
+    "Total opportunistic hydrate_metadata enqueues from /random.",
+)
+
 RANDOM_LATENCY_SECONDS = Histogram(
     "new_pixiv_random_latency_seconds",
     "Latency for /random endpoint (seconds).",
@@ -122,6 +127,7 @@ def _init_labelsets() -> None:
     for result in RANDOM_RESULTS:
         RANDOM_REQUESTS_TOTAL.labels(result=result).inc(0)
     RANDOM_NO_MATCH_TOTAL.inc(0)
+    RANDOM_OPPORTUNISTIC_HYDRATE_ENQUEUED_TOTAL.inc(0)
     UPSTREAM_STREAM_ERRORS_TOTAL.inc(0)
     JOBS_CLAIM_TOTAL.inc(0)
     JOBS_FAILED_TOTAL.inc(0)
