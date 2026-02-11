@@ -43,7 +43,11 @@ async def stream_url(
                 message="Proxy authentication failed",
                 status_code=502,
             ) from exc
-        raise ApiError(code=ErrorCode.UPSTREAM_STREAM_ERROR, message="Upstream request failed", status_code=502) from exc
+        raise ApiError(
+            code=ErrorCode.PROXY_CONNECT_FAILED,
+            message="Proxy connect failed",
+            status_code=502,
+        ) from exc
     except Exception as exc:
         await client.aclose()
         raise ApiError(code=ErrorCode.UPSTREAM_STREAM_ERROR, message="Upstream request failed", status_code=502) from exc
