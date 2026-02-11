@@ -7,8 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.db.session import with_sqlite_busy_retry
 from app.jobs.dispatch import JobDispatcher
-from app.jobs.errors import JobPermanentError
-from app.jobs.model import Job, JobStatus, JobTransition, on_job_failure, on_job_success
+from app.jobs.errors import JobDeferError, JobPermanentError
+from app.jobs.model import Job, JobStatus, JobTransition, on_job_defer, on_job_failure, on_job_success
 
 
 def _as_int(value: Any, *, default: int = 0) -> int:
@@ -98,6 +98,8 @@ async def execute_claimed_job(
 
     try:
         await dispatcher.dispatch(job_row)
+    except JobDeferError as exc:
+        transition = on_job_defer(job, run_after=exc.run_after, error=f"{type(exc).__name__}: {exc}", now=now_dt)
     except JobPermanentError as exc:
         forced = Job(
             id=job.id,

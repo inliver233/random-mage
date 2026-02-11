@@ -94,3 +94,20 @@ def on_job_failure(job: Job, *, error: str, now: datetime | None = None) -> JobT
         updated_at=_iso_utc_ms(now_dt),
     )
 
+
+def on_job_defer(job: Job, *, run_after: str, error: str, now: datetime | None = None) -> JobTransition:
+    now_dt = now or datetime.now(timezone.utc)
+    run_after = (run_after or "").strip()
+    if not run_after:
+        raise ValueError("run_after is required")
+    redacted_error = _truncate(redact_text(error))
+
+    return JobTransition(
+        status=JobStatus.FAILED,
+        attempt=job.attempt,
+        run_after=run_after,
+        last_error=redacted_error,
+        locked_by=None,
+        locked_at=None,
+        updated_at=_iso_utc_ms(now_dt),
+    )
