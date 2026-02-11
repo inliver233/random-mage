@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import random
 from dataclasses import asdict, dataclass
 from typing import Any, Literal
@@ -41,6 +42,18 @@ class ImportErrorItem:
     url: str
     code: str
     message: str
+
+
+def _max_import_text_bytes() -> int:
+    default = 2 * 1024 * 1024
+    raw = (os.environ.get("IMPORT_MAX_BYTES") or "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except Exception:
+        return default
+    return max(1024, min(int(value), 50 * 1024 * 1024))
 
 
 def _parse_import_text(text: str) -> tuple[int, list[tuple[str, Any]], int, list[ImportErrorItem]]:
@@ -103,12 +116,16 @@ def _validate_import_create(data: dict[str, Any]) -> ImportCreateRequest:
 
 async def _load_import_request(request: Request) -> ImportCreateRequest:
     content_type = (request.headers.get("content-type") or "").lower()
+    max_bytes = _max_import_text_bytes()
 
     if content_type.startswith("application/json"):
         data = await request.json()
         if not isinstance(data, dict):
             raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid JSON body", status_code=400)
-        return _validate_import_create(data)
+        body = _validate_import_create(data)
+        if len(body.text.encode("utf-8", errors="ignore")) > max_bytes:
+            raise ApiError(code=ErrorCode.PAYLOAD_TOO_LARGE, message="Payload too large", status_code=413)
+        return body
 
     if content_type.startswith("multipart/form-data"):
         form = await request.form()
@@ -121,6 +138,8 @@ async def _load_import_request(request: Request) -> ImportCreateRequest:
             raise ApiError(code=ErrorCode.INVALID_UPLOAD_TYPE, message="Unsupported upload type", status_code=400)
 
         raw = await file_obj.read()
+        if len(raw) > max_bytes:
+            raise ApiError(code=ErrorCode.PAYLOAD_TOO_LARGE, message="Payload too large", status_code=413)
         text = raw.decode("utf-8", errors="replace")
 
         return _validate_import_create(

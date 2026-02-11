@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from app.core.errors import ApiError, ErrorCode
 from app.core.http_stream import stream_url
+from app.core.security import create_jwt
 from app.db.models.base import Base
 from app.db.models.images import Image
 from app.db.session import create_sessionmaker
@@ -189,3 +190,37 @@ def test_error_codes_upstream_rate_limit_raised_on_429() -> None:
 def test_error_codes_invalid_upload_type_defined_and_used() -> None:
     assert ErrorCode.INVALID_UPLOAD_TYPE.value == "INVALID_UPLOAD_TYPE"
     assert _references_error_code("INVALID_UPLOAD_TYPE") is True
+
+
+def test_error_codes_payload_too_large_defined_and_used() -> None:
+    assert ErrorCode.PAYLOAD_TOO_LARGE.value == "PAYLOAD_TOO_LARGE"
+    assert _references_error_code("PAYLOAD_TOO_LARGE") is True
+
+
+def test_error_codes_payload_too_large_raised_on_import_multipart(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "error_codes_payload_too_large.db"
+    db_url = "sqlite+aiosqlite:///" + db_path.as_posix()
+
+    monkeypatch.setenv("APP_ENV", "dev")
+    monkeypatch.setenv("DATABASE_URL", db_url)
+    monkeypatch.setenv("SECRET_KEY", "secret_test")
+    monkeypatch.setenv("ADMIN_USERNAME", "admin")
+    monkeypatch.setenv("IMPORT_MAX_BYTES", "1024")
+
+    app = create_app()
+
+    token = create_jwt(secret_key="secret_test", subject="admin", ttl_s=3600)
+    with TestClient(app) as client:
+        resp = client.post(
+            "/admin/api/imports",
+            headers={"Authorization": f"Bearer {token}", "X-Request-Id": "req_test"},
+            data={"dry_run": "true", "hydrate_on_import": "false", "source": "manual"},
+            files={"file": ("urls.txt", b"x" * 1025, "text/plain")},
+        )
+
+        assert resp.status_code == 413
+        body = resp.json()
+        assert body["ok"] is False
+        assert body["code"] == "PAYLOAD_TOO_LARGE"
+        assert body["request_id"] == "req_test"
+        assert resp.headers["X-Request-Id"] == "req_test"
