@@ -57,7 +57,8 @@ def test_admin_list_tokens_does_not_echo_refresh_token(tmp_path: Path, monkeypat
         assert body["request_id"] == "req_test"
         assert resp.headers["X-Request-Id"] == "req_test"
 
+        assert body["items"][0]["refresh_token_masked"] == "***"
+
         dumped = json.dumps(body, ensure_ascii=False)
         assert "enc_dummy" not in dumped
-        assert "refresh_token" not in dumped
-
+        assert "refresh_token_enc" not in dumped

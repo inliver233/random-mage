@@ -99,6 +99,7 @@ async def list_tokens(
             "id": str(t.id),
             "label": t.label,
             "enabled": bool(t.enabled),
+            "refresh_token_masked": t.refresh_token_masked,
             "weight": float(t.weight),
             "error_count": int(t.error_count or 0),
             "backoff_until": t.backoff_until,
