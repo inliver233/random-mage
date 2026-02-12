@@ -10,9 +10,19 @@ from typing import Any
 from app.easy_proxies.auto_refresh import EasyProxiesAutoRefreshConfig, EasyProxiesAutoRefresher
 from app.core.config import load_settings
 from app.core.logging import configure_logging, get_logger
+from app.core.redact import redact_text
 from app.core.runtime_settings import set_runtime_setting
 from app.core.time import iso_utc_ms
 from app.db.engine import create_engine
+from app.jobs.claim import DEFAULT_LOCK_TTL_S, claim_next_job
+from app.jobs.dispatch import JobDispatcher
+from app.jobs.errors import JobPermanentError
+from app.jobs.executor import execute_claimed_job
+from app.jobs.handlers.easy_proxies_import import build_easy_proxies_import_handler
+from app.jobs.handlers.heal_url import build_heal_url_handler
+from app.jobs.handlers.hydrate_metadata import build_hydrate_metadata_handler
+from app.jobs.handlers.import_images import build_import_images_handler
+from app.jobs.handlers.proxy_probe import build_proxy_probe_handler
 
 log = get_logger(__name__)
 
@@ -30,6 +40,75 @@ def _install_signal_handlers(stop_event: asyncio.Event) -> None:
             signal.signal(sig, lambda *_: stop_event.set())
         except Exception:
             continue
+
+
+def _disabled_handler(job_type: str, *, reason: str):
+    async def _handler(_job: dict[str, Any]) -> None:
+        raise JobPermanentError(f"{job_type} handler disabled: {reason}")
+
+    return _handler
+
+
+def build_default_dispatcher(engine) -> JobDispatcher:
+    dispatcher = JobDispatcher()
+    dispatcher.register("import_images", build_import_images_handler(engine))
+
+    def _safe_register(job_type: str, builder: Callable[[], Any]) -> None:
+        try:
+            dispatcher.register(job_type, builder())
+        except Exception as exc:
+            msg = redact_text(f"{type(exc).__name__}: {exc}")
+            log.warning("jobs_handler_disabled type=%s reason=%s", job_type, msg)
+            dispatcher.register(job_type, _disabled_handler(job_type, reason=msg))
+
+    _safe_register("hydrate_metadata", lambda: build_hydrate_metadata_handler(engine))
+    _safe_register("heal_url", lambda: build_heal_url_handler(engine))
+    _safe_register("proxy_probe", lambda: build_proxy_probe_handler(engine))
+    _safe_register("easy_proxies_import", lambda: build_easy_proxies_import_handler(engine))
+    return dispatcher
+
+
+def _parse_int_env(name: str, *, default: int, min_v: int, max_v: int) -> int:
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return int(default)
+    try:
+        value = int(raw)
+    except Exception:
+        return int(default)
+    return max(int(min_v), min(int(value), int(max_v)))
+
+
+async def poll_and_execute_jobs(
+    engine,
+    dispatcher: JobDispatcher,
+    *,
+    worker_id: str,
+    lock_ttl_s: int = DEFAULT_LOCK_TTL_S,
+    max_jobs: int = 10,
+) -> int:
+    worker_id = (worker_id or "").strip()
+    if not worker_id:
+        raise ValueError("worker_id is required")
+
+    ran = 0
+    for _ in range(int(max_jobs)):
+        try:
+            job_row = await claim_next_job(engine, worker_id=worker_id, lock_ttl_s=int(lock_ttl_s))
+        except Exception as exc:
+            msg = redact_text(f"{type(exc).__name__}: {exc}")
+            log.warning("jobs_claim_failed err=%s", msg)
+            break
+        if job_row is None:
+            break
+
+        try:
+            await execute_claimed_job(engine, dispatcher, job_row=job_row, worker_id=worker_id)
+        except Exception as exc:
+            msg = redact_text(f"{type(exc).__name__}: {exc}")
+            log.warning("job_execute_failed err=%s", msg)
+        ran += 1
+    return ran
 
 
 async def _poll_once() -> None:
@@ -65,6 +144,8 @@ async def main_async(*, max_iterations: int | None = None, poll_interval_s: floa
 
     engine = create_engine(settings.database_url)
     try:
+        dispatcher = build_default_dispatcher(engine)
+
         base_url = (os.environ.get("EASY_PROXIES_BASE_URL") or "").strip()
         try:
             interval_s = float((os.environ.get("EASY_PROXIES_REFRESH_INTERVAL_SECONDS") or "0").strip() or "0")
@@ -83,6 +164,18 @@ async def main_async(*, max_iterations: int | None = None, poll_interval_s: floa
             log.info("easy_proxies_auto_refresh_enabled base_url=%s interval_s=%s", base_url, interval_s)
 
         worker_id = (os.environ.get("WORKER_ID") or f"pid{os.getpid()}").strip()
+        jobs_lock_ttl_s = _parse_int_env(
+            "WORKER_JOBS_LOCK_TTL_SECONDS",
+            default=int(DEFAULT_LOCK_TTL_S),
+            min_v=5,
+            max_v=3600,
+        )
+        max_jobs_per_tick = _parse_int_env(
+            "WORKER_MAX_JOBS_PER_TICK",
+            default=10,
+            min_v=1,
+            max_v=1000,
+        )
         try:
             heartbeat_interval_s = float((os.environ.get("WORKER_HEARTBEAT_INTERVAL_SECONDS") or "10").strip() or "10")
         except Exception:
@@ -107,7 +200,13 @@ async def main_async(*, max_iterations: int | None = None, poll_interval_s: floa
                     log.warning("worker_heartbeat_update_failed")
 
             await refresher.tick(engine)
-            await _poll_once()
+            await poll_and_execute_jobs(
+                engine,
+                dispatcher,
+                worker_id=worker_id,
+                lock_ttl_s=int(jobs_lock_ttl_s),
+                max_jobs=int(max_jobs_per_tick),
+            )
 
         log.info("worker_start env=%s", settings.app_env)
         await run_worker(
