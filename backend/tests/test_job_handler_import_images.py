@@ -121,6 +121,84 @@ def test_job_handler_import_images_happy_path_and_enqueues_hydrate(tmp_path: Pat
     asyncio.run(_run())
 
 
+def test_job_handler_import_images_supports_file_ref(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "handler_import_images_file_ref.db"
+    db_url = _sqlite_url(db_path)
+    engine = create_engine(db_url)
+
+    monkeypatch.setenv("APP_ENV", "dev")
+    monkeypatch.setenv("DATABASE_URL", db_url)
+
+    payload_dir = tmp_path / "imports_payloads"
+    payload_dir.mkdir(parents=True, exist_ok=True)
+    payload_path = payload_dir / "urls.txt"
+    payload_path.write_text(
+        "\n".join(
+            [
+                "https://i.pximg.net/img-original/img/2020/01/01/00/00/00/111_p0.jpg",
+                "https://i.pximg.net/img-original/img/2020/01/01/00/00/00/111_p0.jpg",
+                "https://i.pximg.net/img-original/img/2020/01/01/00/00/00/222_p0.png",
+                "https://example.com/not_pximg.jpg",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    async def _run() -> None:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        Session = create_sessionmaker(engine)
+        async with Session() as session:
+            imp = Import(created_by="admin", source="manual")
+            session.add(imp)
+            await session.commit()
+            await session.refresh(imp)
+
+            payload = {
+                "import_id": int(imp.id),
+                "hydrate_on_import": False,
+                "file_ref": "imports_payloads/urls.txt",
+            }
+            session.add(
+                JobRow(
+                    type="import_images",
+                    status="pending",
+                    payload_json=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+                    ref_type="import",
+                    ref_id=str(int(imp.id)),
+                )
+            )
+            await session.commit()
+
+        dispatcher = JobDispatcher()
+        dispatcher.register("import_images", build_import_images_handler(engine))
+
+        claimed = await claim_next_job(engine, worker_id="w1")
+        assert claimed is not None
+
+        transition = await execute_claimed_job(engine, dispatcher, job_row=claimed, worker_id="w1")
+        assert transition is not None
+        assert transition.status.value == "completed"
+
+        async with Session() as session:
+            imp2 = await session.get(Import, int(imp.id))
+            assert imp2 is not None
+            assert int(imp2.total) == 4
+            assert int(imp2.accepted) == 2
+            assert int(imp2.success) == 2
+            assert int(imp2.failed) == 1
+
+            images = ((await session.execute(sa.select(Image))).scalars().all())
+            assert len(images) == 2
+
+        assert payload_path.exists() is False
+
+        await engine.dispose()
+
+    asyncio.run(_run())
+
+
 def test_job_handler_import_images_missing_import_id_moves_to_dlq(tmp_path: Path) -> None:
     db_path = tmp_path / "handler_import_images_missing_import_id.db"
     engine = create_engine(_sqlite_url(db_path))
@@ -169,4 +247,3 @@ def test_job_handler_import_images_missing_import_id_moves_to_dlq(tmp_path: Path
         await engine.dispose()
 
     asyncio.run(_run())
-

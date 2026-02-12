@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import json
 import os
-import random
 from dataclasses import asdict, dataclass
 from typing import Any, Literal
+from uuid import uuid4
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Request
@@ -13,10 +13,10 @@ from pydantic import ValidationError
 from starlette.datastructures import UploadFile
 
 from app.api.admin.deps import get_admin_claims
+from app.core.data_files import get_sqlite_db_dir, make_file_ref
 from app.core.errors import ApiError, ErrorCode
 from app.core.request_id import get_or_create_request_id
 from app.core.pixiv_urls import parse_pixiv_original_url
-from app.db.images_upsert import upsert_image_by_illust_page
 from app.db.models.images import Image
 from app.db.models.imports import Import
 from app.db.models.jobs import JobRow
@@ -45,7 +45,7 @@ class ImportErrorItem:
 
 
 def _max_import_text_bytes() -> int:
-    default = 2 * 1024 * 1024
+    default = 50 * 1024 * 1024
     raw = (os.environ.get("IMPORT_MAX_BYTES") or "").strip()
     if not raw:
         return default
@@ -56,12 +56,16 @@ def _max_import_text_bytes() -> int:
     return max(1024, min(int(value), 50 * 1024 * 1024))
 
 
-def _parse_import_text(text: str) -> tuple[int, list[tuple[str, Any]], int, list[ImportErrorItem]]:
+def _parse_import_text(
+    text: str, *, preview_limit: int = 20
+) -> tuple[int, int, int, int, list[ImportErrorItem], list[dict[str, Any]]]:
     total = 0
+    accepted = 0
     deduped = 0
+    error_total = 0
     errors: list[ImportErrorItem] = []
-    items: list[tuple[str, Any]] = []
     seen: set[tuple[int, int]] = set()
+    preview: list[dict[str, Any]] = []
 
     for line_no, raw in enumerate(text.splitlines(), start=1):
         url = raw.strip()
@@ -71,14 +75,16 @@ def _parse_import_text(text: str) -> tuple[int, list[tuple[str, Any]], int, list
         try:
             parsed = parse_pixiv_original_url(url)
         except Exception as exc:
-            errors.append(
-                ImportErrorItem(
-                    line=line_no,
-                    url=url,
-                    code=ErrorCode.UNSUPPORTED_URL.value,
-                    message=str(exc) or ErrorCode.UNSUPPORTED_URL.value,
+            error_total += 1
+            if len(errors) < 200:
+                errors.append(
+                    ImportErrorItem(
+                        line=line_no,
+                        url=url,
+                        code=ErrorCode.UNSUPPORTED_URL.value,
+                        message=str(exc) or ErrorCode.UNSUPPORTED_URL.value,
+                    )
                 )
-            )
             continue
 
         key = (parsed.illust_id, parsed.page_index)
@@ -86,9 +92,19 @@ def _parse_import_text(text: str) -> tuple[int, list[tuple[str, Any]], int, list
             deduped += 1
             continue
         seen.add(key)
-        items.append((url, parsed))
+        accepted += 1
 
-    return total, items, deduped, errors
+        if len(preview) < int(preview_limit):
+            preview.append(
+                {
+                    "illust_id": parsed.illust_id,
+                    "page_index": parsed.page_index,
+                    "ext": parsed.ext,
+                    "url": url,
+                }
+            )
+
+    return total, accepted, deduped, error_total, errors, preview
 
 
 def _parse_bool(value: Any, *, default: bool = False) -> bool:
@@ -162,18 +178,7 @@ async def create_import(
     body = await _load_import_request(request)
     rid = get_or_create_request_id(request)
 
-    total, items, deduped, errors = _parse_import_text(body.text)
-
-    accepted = len(items)
-    preview = [
-        {
-            "illust_id": parsed.illust_id,
-            "page_index": parsed.page_index,
-            "ext": parsed.ext,
-            "url": url,
-        }
-        for url, parsed in items[:20]
-    ]
+    total, accepted, deduped, error_total, errors, preview = _parse_import_text(body.text, preview_limit=20)
 
     if body.dry_run:
         return {
@@ -189,55 +194,48 @@ async def create_import(
 
     engine = request.app.state.engine
     Session = create_sessionmaker(engine)
-    success = 0
+
+    settings = request.app.state.settings
+    db_dir = get_sqlite_db_dir(settings.database_url)
+    payload_dir = db_dir / "imports_payloads"
+    payload_dir.mkdir(parents=True, exist_ok=True)
 
     async with Session() as session:
         imp = Import(created_by=str(_claims.get("sub") or ""), source=body.source)
         session.add(imp)
         await session.flush()
 
-        for url, parsed in items:
-            image_id = await upsert_image_by_illust_page(
-                session,
-                illust_id=parsed.illust_id,
-                page_index=parsed.page_index,
-                ext=parsed.ext,
-                original_url=url,
-                proxy_path="",
-                random_key=random.random(),
-                created_import_id=imp.id,
-            )
-
-            proxy_path = f"/i/{image_id}.{parsed.ext}"
-            await session.execute(
-                sa.update(Image).where(Image.id == image_id).values(proxy_path=proxy_path)
-            )
-
-            success += 1
-
-        imp.total = total
-        imp.accepted = accepted
-        imp.success = success
-        imp.failed = len(errors)
+        imp.total = int(total)
+        imp.accepted = int(accepted)
+        imp.success = 0
+        imp.failed = int(error_total)
         imp.detail_json = json.dumps(
             {
-                "deduped": deduped,
+                "deduped": int(deduped),
                 "errors": [asdict(e) for e in errors[:200]],
             },
             ensure_ascii=False,
         )
 
+        payload_path = payload_dir / f"import_{int(imp.id)}_{uuid4().hex}.txt"
+        try:
+            payload_path.write_text(body.text, encoding="utf-8")
+        except OSError as exc:
+            raise ApiError(code=ErrorCode.INTERNAL_ERROR, message="Failed to persist import payload", status_code=500) from exc
+
+        file_ref = make_file_ref(payload_path, base_dir=db_dir)
+
         job = JobRow(
             type="import_images",
-            status="completed",
+            status="pending",
             payload_json=json.dumps(
                 {
-                    "import_id": imp.id,
-                    "accepted": accepted,
-                    "deduped": deduped,
-                    "failed": len(errors),
+                    "import_id": int(imp.id),
+                    "file_ref": file_ref,
+                    "hydrate_on_import": bool(body.hydrate_on_import),
                 },
                 ensure_ascii=False,
+                separators=(",", ":"),
             ),
             ref_type="import",
             ref_id=str(imp.id),
