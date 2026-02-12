@@ -20,6 +20,7 @@ from app.core.logging import configure_logging
 from app.core.metrics import observe_random_result
 from app.core.request_id import build_request_id_middleware, get_or_create_request_id, set_request_id_on_state
 from app.db.engine import create_engine
+from app.web.admin_ui import mount_admin_ui
 
 
 def create_app() -> FastAPI:
@@ -129,6 +130,8 @@ def create_app() -> FastAPI:
     app.include_router(version_router)
     app.include_router(metrics_router)
     app.include_router(admin_router)
+
+    mount_admin_ui(app)
 
     return app
 

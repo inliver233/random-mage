@@ -32,11 +32,19 @@ data/app.db
 运行/验证（本仓库）：
 
 ```bash
-docker compose -f deploy/docker-compose.yml config
-docker compose -f deploy/docker-compose.yml up -d --build
+cd deploy
+docker compose config
+docker compose up -d --build
 ```
 
 > 说明：`deploy/docker-compose.yml` 挂载 `../data:/app/data`（相对 compose 文件目录 `deploy/`），因此 DB 文件在宿主机是 `data/app.db`。
+
+运行成功后（默认端口 `23222`）：
+- 管理后台（React）：`http://<你的IP>:23222/admin`（登录页：`/admin/login`）
+- Swagger：`http://<你的IP>:23222/docs`
+- 健康检查：`http://<你的IP>:23222/healthz`
+
+> 本仓库的 Docker 镜像会在 build 时打包前端产物，并由 `api` 服务在 `/admin` 下直接托管；默认无需额外 `web` 服务。
 
 ### 2.2 生产建议布局（示例）
 
@@ -238,6 +246,12 @@ curl -X POST http://127.0.0.1:23222/admin/api/maintenance/request-logs/cleanup \
 - 增大 busy_timeout
 - 降低 worker 并发
 - 缩短写事务（批量写入分 chunk）
+
+### 7.1.1 外网访问 `HTTP 502`，但服务器内 `curl http://127.0.0.1:23222/healthz` 正常
+优先排查顺序：
+1) 云厂商安全组/防火墙：确认入站已放行 `23222/tcp`（UFW 放行不等于安全组放行）
+2) 客户端代理/网络：关闭系统代理（如 Clash/V2Ray 等）或把 `154.17.18.187:23222` 加入直连列表
+3) 自检响应来源：在服务器上执行 `curl -i http://<公网IP>:23222/healthz`，看响应头是否包含 `server: uvicorn`
 
 ### 7.2 /random 总是 NO_MATCH
 - Images=0：先导入

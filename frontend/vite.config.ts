@@ -7,6 +7,7 @@ export default defineConfig(({ mode }) => {
   const apiTarget = (env.VITE_API_PROXY_TARGET || "http://localhost:8000").trim();
 
   return {
+    base: mode === "production" ? "/admin/" : "/",
     plugins: [react()],
     server: {
       proxy: {
