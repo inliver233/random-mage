@@ -20,6 +20,22 @@ from app.easy_proxies.client import EasyProxiesError, easy_proxies_auth, easy_pr
 router = APIRouter()
 
 
+def _mask_proxy_uri(*, scheme: str, host: str, port: int, username: str, password_set: bool) -> str:
+    scheme = (scheme or "").strip().lower()
+    host = (host or "").strip()
+    username = (username or "").strip()
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+
+    auth = ""
+    if username:
+        auth = f"{username}@"
+        if password_set:
+            auth = f"{username}:***@"
+
+    return f"{scheme}://{auth}{host}:{int(port)}"
+
+
 @router.get("/proxies/endpoints")
 async def list_proxy_endpoints(
     request: Request,
@@ -42,18 +58,24 @@ async def list_proxy_endpoints(
     items = [
         {
             "id": str(p.id),
-            "scheme": p.scheme,
-            "host": p.host,
-            "port": int(p.port),
-            "username": p.username,
             "enabled": bool(p.enabled),
-            "source": p.source,
-            "source_ref": p.source_ref,
-            "last_latency_ms": p.last_latency_ms,
-            "last_ok_at": p.last_ok_at,
-            "last_fail_at": p.last_fail_at,
-            "success_count": int(p.success_count or 0),
-            "failure_count": int(p.failure_count or 0),
+            "uri_masked": _mask_proxy_uri(
+                scheme=str(p.scheme),
+                host=str(p.host),
+                port=int(p.port),
+                username=str(p.username or ""),
+                password_set=bool(str(p.password_enc or "").strip()),
+            ),
+            "latency_ms": float(p.last_latency_ms) if p.last_latency_ms is not None else None,
+            "status": (
+                "blacklisted"
+                if p.blacklisted_until
+                else "ok"
+                if p.last_ok_at and (not p.last_fail_at or str(p.last_ok_at) >= str(p.last_fail_at))
+                else "fail"
+                if p.last_fail_at
+                else "unknown"
+            ),
             "blacklisted_until": p.blacklisted_until,
             "last_error": p.last_error,
         }
