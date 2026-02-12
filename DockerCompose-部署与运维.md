@@ -77,7 +77,7 @@ services:
     volumes:
       - ./data:/data
     ports:
-      - "8000:8000"
+      - "23222:8000"
     command: ["uvicorn","app.main:app","--host","0.0.0.0","--port","8000"]
 
   worker:
@@ -200,7 +200,7 @@ PY
 
 示例（dry-run）：
 ```bash
-curl -X POST http://127.0.0.1:8000/admin/api/maintenance/request-logs/cleanup \
+curl -X POST http://127.0.0.1:23222/admin/api/maintenance/request-logs/cleanup \
   -H "Authorization: Bearer <admin_jwt>" \
   -H "Content-Type: application/json" \
   -d '{"keep_days":30,"max_delete_rows":50000,"chunk_size":1000,"dry_run":true}'
@@ -208,7 +208,7 @@ curl -X POST http://127.0.0.1:8000/admin/api/maintenance/request-logs/cleanup \
 
 执行清理：
 ```bash
-curl -X POST http://127.0.0.1:8000/admin/api/maintenance/request-logs/cleanup \
+curl -X POST http://127.0.0.1:23222/admin/api/maintenance/request-logs/cleanup \
   -H "Authorization: Bearer <admin_jwt>" \
   -H "Content-Type: application/json" \
   -d '{"keep_days":30,"max_delete_rows":50000,"chunk_size":1000}'
