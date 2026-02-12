@@ -21,6 +21,21 @@ type ProxiesEndpointsResponse = {
   request_id: string;
 };
 
+type ManualImportFormValues = {
+  text: string;
+  source: "manual";
+  conflict_policy: "overwrite" | "skip";
+};
+
+type ManualImportResponse = {
+  ok: true;
+  created: number;
+  updated: number;
+  skipped: number;
+  errors: Array<{ line: number; code: string; message: string }>;
+  request_id: string;
+};
+
 type EasyProxiesImportFormValues = {
   base_url: string;
   password: string;
@@ -64,6 +79,11 @@ export function ProxiesPage() {
     queryFn: () => apiJson<ProxiesEndpointsResponse>("/admin/api/proxies/endpoints"),
   });
 
+  const [manualErrorMessage, setManualErrorMessage] = useState<string | null>(null);
+  const [manualRequestId, setManualRequestId] = useState<string | null>(null);
+  const [manualResult, setManualResult] = useState<ManualImportResponse | null>(null);
+  const [manualForm] = Form.useForm<ManualImportFormValues>();
+
   const [probeErrorMessage, setProbeErrorMessage] = useState<string | null>(null);
   const [probeRequestId, setProbeRequestId] = useState<string | null>(null);
   const [probeJobId, setProbeJobId] = useState<string | null>(null);
@@ -72,6 +92,37 @@ export function ProxiesPage() {
   const [easyRequestId, setEasyRequestId] = useState<string | null>(null);
   const [easyResult, setEasyResult] = useState<EasyProxiesImportResponse | null>(null);
   const [easyForm] = Form.useForm<EasyProxiesImportFormValues>();
+
+  const manualImport = useMutation({
+    mutationFn: (values: ManualImportFormValues) =>
+      apiJson<ManualImportResponse>("/admin/api/proxies/endpoints/import", {
+        method: "POST",
+        body: JSON.stringify(values),
+      }),
+    onMutate: () => {
+      setManualErrorMessage(null);
+      setManualRequestId(null);
+      setManualResult(null);
+    },
+    onSuccess: (data) => {
+      setManualResult(data);
+      setManualRequestId(data.request_id);
+      manualForm.setFieldValue("text", "");
+      qc.invalidateQueries({ queryKey: ["admin", "proxies", "endpoints"] });
+    },
+    onError: (err) => {
+      if (err instanceof ApiError) {
+        setManualErrorMessage(err.message);
+        setManualRequestId(requestIdFromError(err));
+        return;
+      }
+      if (err instanceof Error) {
+        setManualErrorMessage(err.message);
+        return;
+      }
+      setManualErrorMessage("Import failed");
+    },
+  });
 
   const probe = useMutation({
     mutationFn: () => apiJson<ProxiesProbeResponse>("/admin/api/proxies/probe", { method: "POST" }),
@@ -136,8 +187,20 @@ export function ProxiesPage() {
       </Typography.Title>
 
       <Card title="Import (manual)">
-        <Form layout="vertical" initialValues={{ source: "manual", conflict_policy: "overwrite", text: "" }}>
-          <Form.Item label="Text (one URI per line)" name="text">
+        {manualErrorMessage ? <Alert type="error" showIcon message={manualErrorMessage} /> : null}
+        {manualRequestId ? <Typography.Text type="secondary">request_id: {manualRequestId}</Typography.Text> : null}
+
+        <Form<ManualImportFormValues>
+          form={manualForm}
+          layout="vertical"
+          initialValues={{ source: "manual", conflict_policy: "overwrite", text: "" }}
+          onFinish={(v) => manualImport.mutate(v)}
+        >
+          <Form.Item
+            label="Text (one URI per line)"
+            name="text"
+            rules={[{ required: true, message: "text is required" }]}
+          >
             <Input.TextArea rows={6} placeholder="http://user:pass@1.2.3.4:8080" />
           </Form.Item>
           <Space wrap>
@@ -148,19 +211,33 @@ export function ProxiesPage() {
               <Select
                 options={[
                   { value: "overwrite", label: "overwrite" },
-                  { value: "skip_non_source", label: "skip_non_source" },
-                  { value: "skip_non_manual", label: "skip_non_manual" },
-                  { value: "skip_non_easy_proxies", label: "skip_non_easy_proxies" },
+                  { value: "skip", label: "skip" },
                 ]}
                 style={{ minWidth: 220 }}
               />
             </Form.Item>
           </Space>
-          <Button type="primary" disabled>
+          <Button type="primary" htmlType="submit" loading={manualImport.isPending}>
             导入
           </Button>
         </Form>
-        <Alert type="info" showIcon message="TODO" description="Import wiring pending (see UI action issues)." style={{ marginTop: 12 }} />
+        {manualImport.isPending ? <Alert type="info" showIcon message="Importing..." style={{ marginTop: 12 }} /> : null}
+        {manualResult ? (
+          <Alert
+            type="success"
+            showIcon
+            message="Imported"
+            description={`created: ${manualResult.created}, updated: ${manualResult.updated}, skipped: ${manualResult.skipped}, errors: ${manualResult.errors.length}`}
+            style={{ marginTop: 12 }}
+          />
+        ) : null}
+        <Alert
+          type="info"
+          showIcon
+          message="Security"
+          description="Proxy passwords are write-only: stored encrypted and never displayed; list shows masked URIs."
+          style={{ marginTop: 12 }}
+        />
       </Card>
 
       <Card title="easy_proxies">

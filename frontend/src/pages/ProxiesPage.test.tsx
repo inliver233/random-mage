@@ -42,6 +42,18 @@ describe("ProxiesPage", () => {
             { status: 200, headers: { "Content-Type": "application/json" } },
           );
         }
+        if (url.endsWith("/admin/api/proxies/endpoints/import")) {
+          expect(init?.method).toBe("POST");
+          const body = init?.body ? JSON.parse(String(init.body)) : {};
+          expect(body.source).toBe("manual");
+          expect(body.conflict_policy).toBe("overwrite");
+          expect(String(body.text || "")).toContain("http://u:pa@ss@1.2.3.4:8080");
+          expect(String(body.text || "")).toContain("socks5://5.6.7.8:1080");
+          return new Response(JSON.stringify({ ok: true, created: 2, updated: 0, skipped: 0, errors: [], request_id: "req_manual" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
         if (url.endsWith("/admin/api/proxies/easy-proxies/import")) {
           expect(init?.method).toBe("POST");
           const body = init?.body ? JSON.parse(String(init.body)) : {};
@@ -96,6 +108,24 @@ describe("ProxiesPage", () => {
 
     expect(await screen.findByText("easy_proxies imported")).toBeInTheDocument();
     expect(await screen.findByText(/request_id:\s*req_easy/)).toBeInTheDocument();
+  });
+
+  it("imports manual endpoints", async () => {
+    const qc = makeClient();
+    render(
+      <QueryClientProvider client={qc}>
+        <ProxiesPage />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("Proxies")).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText("http://user:pass@1.2.3.4:8080"), {
+      target: { value: "http://u:pa@ss@1.2.3.4:8080\nsocks5://5.6.7.8:1080\n" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^导\s*入$/ }));
+
+    expect(await screen.findByText("Imported")).toBeInTheDocument();
+    expect(await screen.findByText(/request_id:\s*req_manual/)).toBeInTheDocument();
   });
 
   it("enqueues proxy probe job", async () => {
