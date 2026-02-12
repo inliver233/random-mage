@@ -25,7 +25,7 @@
 
 ```text
 deploy/docker-compose.yml
-deploy/.env.example
+deploy/.env (copy from .env.example)
 data/app.db
 ```
 

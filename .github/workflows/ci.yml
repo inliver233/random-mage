@@ -64,5 +64,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Prepare deploy env file
+        run: |
+          if [ ! -f deploy/.env ]; then
+            cp deploy/.env.example deploy/.env
+          fi
+
       - name: Validate docker compose config
         run: docker compose -f deploy/docker-compose.yml config > /dev/null
