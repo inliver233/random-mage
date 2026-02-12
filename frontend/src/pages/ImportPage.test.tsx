@@ -19,9 +19,18 @@ describe("ImportPage", () => {
   beforeEach(() => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
         if (url.endsWith("/admin/api/imports")) {
+          const headers = new Headers(init?.headers || {});
+          const body = init?.body;
+          if (body instanceof FormData) {
+            expect(headers.get("Content-Type")).toBeNull();
+            expect(body.get("file")).toBeInstanceOf(File);
+            expect(String(body.get("source"))).toBe("manual");
+          } else if (body) {
+            expect(headers.get("Content-Type")).toBe("application/json");
+          }
           return new Response(
             JSON.stringify({
               ok: true,
@@ -78,6 +87,32 @@ describe("ImportPage", () => {
 
     expect(await screen.findByText(/request_id:\s*req_import/)).toBeInTheDocument();
     expect(await screen.findByText(/accepted:\s*1/)).toBeInTheDocument();
+
+    await waitFor(() => {
+      const fetchMock = globalThis.fetch as unknown as { mock: { calls: unknown[][] } };
+      expect(fetchMock.mock.calls.some((c) => String(c[0]).endsWith("/admin/api/imports"))).toBe(true);
+    });
+  });
+
+  it("submits import with file upload (FormData)", async () => {
+    const qc = makeClient();
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={["/admin/import"]}>
+          <Routes>
+            <Route path="/admin/import" element={<ImportPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    const fileInput = screen.getByTestId("import-file-input") as HTMLInputElement;
+    const file = new File(["https://example.com/1\n"], "urls.txt", { type: "text/plain" });
+    fireEvent.change(fileInput, { target: { files: [file] } });
+
+    fireEvent.click(screen.getByRole("button", { name: /导\s*入/ }));
+
+    expect(await screen.findByText(/request_id:\s*req_import/)).toBeInTheDocument();
 
     await waitFor(() => {
       const fetchMock = globalThis.fetch as unknown as { mock: { calls: unknown[][] } };

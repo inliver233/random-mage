@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Alert, Card, Descriptions, Skeleton, Space, Typography } from "antd";
+import { Alert, Card, Descriptions, Progress, Skeleton, Space, Typography } from "antd";
 import React from "react";
 import { useParams } from "react-router-dom";
 
@@ -47,6 +47,11 @@ export function ImportDetailPage() {
     queryKey: ["admin", "imports", id],
     enabled: Boolean(id),
     queryFn: () => apiJson<ImportDetailResponse>(`/admin/api/imports/${id}`),
+    refetchInterval: (query) => {
+      const data = query.state.data as ImportDetailResponse | undefined;
+      const status = String(data?.item.job?.status || "");
+      return status === "pending" || status === "running" ? 1000 : false;
+    },
   });
 
   if (!id) {
@@ -72,6 +77,10 @@ export function ImportDetailPage() {
         <>
           <Typography.Text type="secondary">request_id: {q.data?.request_id}</Typography.Text>
 
+          {q.data?.item.job && (q.data.item.job.status === "pending" || q.data.item.job.status === "running") ? (
+            <Alert type="info" showIcon message="Import in progress (auto refresh every 1s)" />
+          ) : null}
+
           <Card title="Summary">
             <Descriptions size="small" column={2}>
               <Descriptions.Item label="created_at">{q.data?.item.import.created_at}</Descriptions.Item>
@@ -82,6 +91,29 @@ export function ImportDetailPage() {
               <Descriptions.Item label="success">{q.data?.item.import.success}</Descriptions.Item>
               <Descriptions.Item label="failed">{q.data?.item.import.failed}</Descriptions.Item>
             </Descriptions>
+
+            {q.data?.item.job ? (
+              <div style={{ marginTop: 12 }}>
+                <Progress
+                  percent={(() => {
+                    const accepted = Number(q.data?.item.import.accepted || 0);
+                    const total = Number(q.data?.item.import.total || 0);
+                    const denom = accepted > 0 ? accepted : total > 0 ? total : 0;
+                    const success = Number(q.data?.item.import.success || 0);
+                    if (denom <= 0) return 0;
+                    const pct = Math.round((success / denom) * 100);
+                    return Math.max(0, Math.min(100, pct));
+                  })()}
+                  status={
+                    q.data.item.job.status === "completed"
+                      ? "success"
+                      : q.data.item.job.status === "failed" || q.data.item.job.status === "dlq"
+                        ? "exception"
+                        : "active"
+                  }
+                />
+              </div>
+            ) : null}
           </Card>
 
           <Card title="Job">
@@ -109,4 +141,3 @@ export function ImportDetailPage() {
     </Space>
   );
 }
-

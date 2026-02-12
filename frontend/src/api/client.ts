@@ -32,7 +32,10 @@ export async function apiFetch(path: string, init?: RequestInit): Promise<Respon
   const headers = new Headers(init?.headers || {});
   const token = getAdminToken();
   if (token) headers.set("Authorization", `Bearer ${token}`);
-  if (!headers.has("Content-Type") && init?.body) {
+  const body = init?.body;
+  const isFormData =
+    typeof FormData !== "undefined" && body && body instanceof FormData;
+  if (!headers.has("Content-Type") && body && !isFormData) {
     headers.set("Content-Type", "application/json");
   }
 

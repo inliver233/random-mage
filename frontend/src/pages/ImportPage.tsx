@@ -30,13 +30,22 @@ function requestIdFromError(err: unknown): string | null {
 export function ImportPage() {
   const navigate = useNavigate();
   const [form] = Form.useForm<ImportFormValues>();
+  const [file, setFile] = useState<File | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [requestId, setRequestId] = useState<string | null>(null);
   const [result, setResult] = useState<ImportCreateResponse | null>(null);
 
   const m = useMutation({
-    mutationFn: (values: ImportFormValues) =>
-      apiJson<ImportCreateResponse>("/admin/api/imports", {
+    mutationFn: (values: ImportFormValues) => {
+      if (file) {
+        const fd = new FormData();
+        fd.append("file", file);
+        fd.append("dry_run", values.dry_run ? "true" : "false");
+        fd.append("hydrate_on_import", values.hydrate_on_import ? "true" : "false");
+        fd.append("source", "manual");
+        return apiJson<ImportCreateResponse>("/admin/api/imports", { method: "POST", body: fd });
+      }
+      return apiJson<ImportCreateResponse>("/admin/api/imports", {
         method: "POST",
         body: JSON.stringify({
           text: values.text,
@@ -44,7 +53,8 @@ export function ImportPage() {
           hydrate_on_import: values.hydrate_on_import,
           source: "manual",
         }),
-      }),
+      });
+    },
     onMutate: () => {
       setErrorMessage(null);
       setRequestId(null);
@@ -89,12 +99,34 @@ export function ImportPage() {
           initialValues={{ dry_run: false, hydrate_on_import: false, text: "" }}
           onFinish={(v) => m.mutate(v)}
         >
+          <Form.Item label="Upload (.txt, optional)">
+            <input
+              data-testid="import-file-input"
+              type="file"
+              accept=".txt,text/plain"
+              onChange={(e) => setFile(e.target.files && e.target.files[0] ? e.target.files[0] : null)}
+            />
+            <div style={{ marginTop: 8 }}>
+              <Typography.Text type="secondary">
+                {file ? `Selected: ${file.name}` : "No file selected (paste URLs below)."}
+              </Typography.Text>
+            </div>
+          </Form.Item>
+
           <Form.Item
             label="URLs"
             name="text"
-            rules={[{ required: true, message: "Please paste Pixiv original URLs" }]}
+            rules={[
+              {
+                validator: async (_rule, value) => {
+                  if (file) return Promise.resolve();
+                  if (String(value || "").trim()) return Promise.resolve();
+                  return Promise.reject(new Error("Please paste Pixiv original URLs or upload a .txt file"));
+                },
+              },
+            ]}
           >
-            <Input.TextArea rows={8} placeholder="One URL per line" />
+            <Input.TextArea rows={8} placeholder="One URL per line" disabled={Boolean(file)} />
           </Form.Item>
 
           <Space size="large">
