@@ -2,7 +2,15 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Mapping
+
+from cryptography.fernet import Fernet
+
+from app.core.crypto import FieldEncryptor
+from app.core.logging import get_logger
+
+log = get_logger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,13 +53,67 @@ def _get_bool(env: Mapping[str, str], key: str, default: bool) -> bool:
     return default
 
 
+def _read_key_file(path: Path) -> str | None:
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except Exception as exc:
+        log.warning("field_encryption_key_read_failed path=%s err=%s", str(path), type(exc).__name__)
+        return None
+
+    value = raw.strip()
+    return value or None
+
+
+def _atomic_write(path: Path, *, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(content, encoding="utf-8")
+    try:
+        os.chmod(tmp, 0o600)
+    except Exception:
+        pass
+    os.replace(tmp, path)
+
+
+def _ensure_field_encryption_key(env: Mapping[str, str], *, app_env: str) -> str:
+    key = _get(env, "FIELD_ENCRYPTION_KEY", "")
+    if key:
+        FieldEncryptor.from_key(key)
+        return key
+
+    file_raw = _get(env, "FIELD_ENCRYPTION_KEY_FILE", "")
+    key_file = Path(file_raw) if file_raw else Path("./data/field_encryption_key")
+
+    from_file = _read_key_file(key_file)
+    if from_file is not None:
+        FieldEncryptor.from_key(from_file)
+        return from_file
+
+    if app_env in {"prod", "production"}:
+        return ""
+
+    generated = Fernet.generate_key().decode("utf-8")
+    try:
+        _atomic_write(key_file, content=generated + "\n")
+        log.info("field_encryption_key_generated path=%s", str(key_file))
+    except Exception as exc:
+        log.warning(
+            "field_encryption_key_generated_not_persisted path=%s err=%s",
+            str(key_file),
+            type(exc).__name__,
+        )
+    return generated
+
+
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     env = env or os.environ
 
     app_env = _get(env, "APP_ENV", "dev").lower()
     database_url = _get(env, "DATABASE_URL", "sqlite+aiosqlite:///./data/app.db")
     secret_key = _get(env, "SECRET_KEY", "dev-secret-key" if app_env != "prod" else "")
-    field_encryption_key = _get(env, "FIELD_ENCRYPTION_KEY", "")
+    field_encryption_key = _ensure_field_encryption_key(env, app_env=app_env)
 
     admin_username = _get(env, "ADMIN_USERNAME", "admin")
     admin_password = _get(env, "ADMIN_PASSWORD", "admin" if app_env != "prod" else "")

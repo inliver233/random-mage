@@ -112,3 +112,57 @@ def test_admin_import_proxies_encrypts_password_and_supports_overwrite(tmp_path:
         enc = asyncio.run(_fetch_first_enc())
         assert encryptor.decrypt_text(enc) == password2
 
+
+def test_admin_import_proxies_auto_generates_field_encryption_key(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    db_path = tmp_path / "admin_import_proxies_auto.db"
+    db_url = "sqlite+aiosqlite:///" + db_path.as_posix()
+
+    monkeypatch.setenv("APP_ENV", "dev")
+    monkeypatch.setenv("DATABASE_URL", db_url)
+    monkeypatch.setenv("SECRET_KEY", "secret_test")
+    monkeypatch.setenv("ADMIN_USERNAME", "admin")
+    monkeypatch.delenv("FIELD_ENCRYPTION_KEY", raising=False)
+    monkeypatch.delenv("FIELD_ENCRYPTION_KEY_FILE", raising=False)
+
+    app = create_app()
+
+    async def _migrate() -> None:
+        async with app.state.engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+    asyncio.run(_migrate())
+
+    key_path = tmp_path / "data" / "field_encryption_key"
+    assert key_path.exists()
+    field_key = key_path.read_text(encoding="utf-8").strip()
+    encryptor = FieldEncryptor.from_key(field_key)
+
+    admin_token = create_jwt(secret_key="secret_test", subject="admin", ttl_s=3600)
+
+    password = "pass_SECRET_1"
+    with TestClient(app) as client:
+        resp = client.post(
+            "/admin/api/proxies/endpoints/import",
+            headers={"Authorization": f"Bearer {admin_token}", "X-Request-Id": "req_test"},
+            json={
+                "text": f"http://u:{password}@1.2.3.4:8080",
+                "source": "manual",
+                "conflict_policy": "skip",
+            },
+        )
+        assert resp.status_code == 200
+
+        async def _fetch_first_enc() -> str:
+            async with app.state.engine.connect() as conn:
+                result = await conn.exec_driver_sql(
+                    "SELECT password_enc FROM proxy_endpoints WHERE host = ? AND port = ? AND username = ?",
+                    ("1.2.3.4", 8080, "u"),
+                )
+                row = result.fetchone()
+                assert row is not None
+                return str(row[0])
+
+        enc = asyncio.run(_fetch_first_enc())
+        assert encryptor.decrypt_text(enc) == password

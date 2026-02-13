@@ -3,6 +3,7 @@ __pycache__/
 *.pyo
 
 .pytest_cache/
+backend/.pytest_cache/
 
 .venv/
 venv/
@@ -11,4 +12,5 @@ node_modules/
 dist/
 
 data/
+backend/data/
 deploy/.env

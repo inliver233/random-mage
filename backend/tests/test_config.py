@@ -1,6 +1,7 @@
 import pytest
 
 from app.core.config import load_settings
+from app.core.crypto import FieldEncryptor
 
 
 def test_load_settings_dev_defaults() -> None:
@@ -16,3 +17,19 @@ def test_load_settings_prod_requires_secrets() -> None:
     with pytest.raises(ValueError):
         load_settings({"APP_ENV": "prod"})
 
+
+def test_load_settings_dev_auto_generates_field_encryption_key(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("APP_ENV", "dev")
+    monkeypatch.delenv("FIELD_ENCRYPTION_KEY", raising=False)
+    monkeypatch.delenv("FIELD_ENCRYPTION_KEY_FILE", raising=False)
+
+    s1 = load_settings()
+    assert s1.field_encryption_key
+    FieldEncryptor.from_key(s1.field_encryption_key)
+
+    key_path = tmp_path / "data" / "field_encryption_key"
+    assert key_path.exists()
+
+    s2 = load_settings()
+    assert s2.field_encryption_key == s1.field_encryption_key
