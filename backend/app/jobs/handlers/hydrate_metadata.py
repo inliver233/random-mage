@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import random
 import time
 from dataclasses import dataclass
@@ -23,6 +24,7 @@ from app.core.runtime_settings import RuntimeConfig, load_runtime_config
 from app.core.time import iso_utc_ms
 from app.db.models.image_tags import ImageTag
 from app.db.models.images import Image
+from app.db.models.hydration_runs import HydrationRun
 from app.db.models.pixiv_tokens import PixivToken
 from app.db.models.tags import Tag
 from app.db.session import create_sessionmaker, with_sqlite_busy_retry
@@ -213,6 +215,220 @@ def build_hydrate_metadata_handler(
     token_cache = AccessTokenCache()
     choose_lock = asyncio.Lock()
     last_token_id: int | None = None
+
+    def _as_int(value: Any, *, default: int = 0) -> int:
+        try:
+            return int(value)
+        except Exception:
+            return default
+
+    def _missing_set_from_criteria(criteria: dict[str, Any]) -> set[str]:
+        default = {"tags", "geometry", "r18", "ai", "user", "title", "created_at"}
+        raw = criteria.get("missing")
+        if not isinstance(raw, list):
+            return set(default)
+        out: set[str] = set()
+        for item in raw:
+            if not isinstance(item, str):
+                continue
+            v = item.strip().lower()
+            if not v:
+                continue
+            if v in {"all", "*"}:
+                return set(default)
+            out.add(v)
+        return out or set(default)
+
+    def _build_missing_predicate_sql(missing: set[str]) -> str:
+        parts: list[str] = []
+
+        if "geometry" in missing:
+            parts.append("(width IS NULL OR height IS NULL OR orientation IS NULL OR aspect_ratio IS NULL)")
+        if "r18" in missing:
+            parts.append("(x_restrict IS NULL)")
+        if "ai" in missing:
+            parts.append("(ai_type IS NULL)")
+        if "user" in missing:
+            parts.append("(user_id IS NULL)")
+        if "title" in missing:
+            parts.append("(title IS NULL)")
+        if "created_at" in missing:
+            parts.append("(created_at_pixiv IS NULL)")
+        if "tags" in missing:
+            parts.append("NOT EXISTS (SELECT 1 FROM image_tags it WHERE it.image_id = images.id)")
+
+        return "(" + " OR ".join(parts) + ")" if parts else "(1=1)"
+
+    async def _load_run_state(run_id: int) -> dict[str, Any]:
+        Session = create_sessionmaker(engine)
+
+        async def _op() -> dict[str, Any]:
+            async with Session() as session:
+                run = await session.get(HydrationRun, int(run_id))
+                if run is None:
+                    raise JobPermanentError("Hydration run not found")
+
+                criteria: dict[str, Any] = {}
+                try:
+                    criteria_raw = json.loads(run.criteria_json or "{}")
+                    if isinstance(criteria_raw, dict):
+                        criteria = dict(criteria_raw)
+                except Exception:
+                    criteria = {}
+
+                cursor_image_id = 0
+                try:
+                    cursor_raw = json.loads(run.cursor_json or "{}")
+                    if isinstance(cursor_raw, dict):
+                        cursor_image_id = _as_int(cursor_raw.get("cursor_image_id"), default=0)
+                except Exception:
+                    cursor_image_id = 0
+
+                return {
+                    "status": str(run.status),
+                    "criteria": criteria,
+                    "cursor_image_id": int(max(0, cursor_image_id)),
+                    "processed": int(run.processed or 0),
+                    "success": int(run.success or 0),
+                    "failed": int(run.failed or 0),
+                    "started_at": run.started_at,
+                    "finished_at": run.finished_at,
+                }
+
+        return await with_sqlite_busy_retry(_op)
+
+    async def _mark_run_running(run_id: int) -> None:
+        now_iso = iso_utc_ms()
+        Session = create_sessionmaker(engine)
+
+        async def _op() -> None:
+            async with Session() as session:
+                run = await session.get(HydrationRun, int(run_id))
+                if run is None:
+                    raise JobPermanentError("Hydration run not found")
+                if str(run.status) not in {"pending", "running"}:
+                    return
+                run.status = "running"
+                if run.started_at is None:
+                    run.started_at = now_iso
+                run.updated_at = now_iso
+                run.last_error = None
+                await session.commit()
+
+        await with_sqlite_busy_retry(_op)
+
+    async def _update_run_progress(
+        run_id: int,
+        *,
+        cursor_image_id: int,
+        cursor_illust_id: int,
+        processed_inc: int,
+        success_inc: int,
+        failed_inc: int,
+        last_error: str | None,
+    ) -> None:
+        now_iso = iso_utc_ms()
+        cursor_json = json.dumps(
+            {"cursor_image_id": int(cursor_image_id), "cursor_illust_id": int(cursor_illust_id)},
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        Session = create_sessionmaker(engine)
+
+        async def _op() -> None:
+            async with Session() as session:
+                run = await session.get(HydrationRun, int(run_id))
+                if run is None:
+                    raise JobPermanentError("Hydration run not found")
+                run.cursor_json = cursor_json
+                run.processed = int(run.processed or 0) + int(processed_inc)
+                run.success = int(run.success or 0) + int(success_inc)
+                run.failed = int(run.failed or 0) + int(failed_inc)
+                run.updated_at = now_iso
+                if last_error is not None:
+                    run.last_error = (str(last_error) or "")[:500]
+                await session.commit()
+
+        await with_sqlite_busy_retry(_op)
+
+    async def _mark_run_completed(run_id: int) -> None:
+        now_iso = iso_utc_ms()
+        Session = create_sessionmaker(engine)
+
+        async def _op() -> None:
+            async with Session() as session:
+                run = await session.get(HydrationRun, int(run_id))
+                if run is None:
+                    raise JobPermanentError("Hydration run not found")
+                if str(run.status) not in {"pending", "running"}:
+                    return
+                run.status = "completed"
+                if run.finished_at is None:
+                    run.finished_at = now_iso
+                run.updated_at = now_iso
+                run.last_error = None
+                await session.commit()
+
+        await with_sqlite_busy_retry(_op)
+
+    async def _release_job_lock(
+        *,
+        job_id: int,
+        worker_id: str,
+        status: str,
+        run_after: str | None,
+    ) -> bool:
+        sql = """
+UPDATE jobs
+SET status=:status,
+    run_after=:run_after,
+    last_error=NULL,
+    locked_by=NULL,
+    locked_at=NULL,
+    updated_at=:now
+WHERE id=:id AND status='running' AND locked_by=:worker_id;
+""".strip()
+
+        async def _op() -> bool:
+            async with engine.begin() as conn:
+                result = await conn.exec_driver_sql(
+                    sql,
+                    {
+                        "status": str(status),
+                        "run_after": run_after,
+                        "now": iso_utc_ms(),
+                        "id": int(job_id),
+                        "worker_id": worker_id,
+                    },
+                )
+                return (result.rowcount or 0) == 1
+
+        return await with_sqlite_busy_retry(_op)
+
+    async def _pick_next_candidate(
+        *,
+        cursor_image_id: int,
+        missing_predicate_sql: str,
+    ) -> tuple[int, int] | None:
+        sql = f"""
+SELECT id, illust_id
+FROM images
+WHERE status=1
+  AND id > :cursor
+  AND {missing_predicate_sql}
+ORDER BY id ASC
+LIMIT 1;
+""".strip()
+
+        async def _op() -> tuple[int, int] | None:
+            async with engine.connect() as conn:
+                result = await conn.exec_driver_sql(sql, {"cursor": int(cursor_image_id)})
+                row = result.first()
+                if row is None:
+                    return None
+                return int(row[0]), int(row[1])
+
+        return await with_sqlite_busy_retry(_op)
 
     async def _load_tokens(now_epoch: float) -> list[TokenCandidate]:
         async with Session() as session:
@@ -532,19 +748,7 @@ def build_hydrate_metadata_handler(
 
         await with_sqlite_busy_retry(_op)
 
-    async def _handler(job: dict[str, Any]) -> None:
-        payload_json = str(job.get("payload_json") or "")
-        payload = _parse_payload(payload_json)
-
-        try:
-            illust_id = int(payload.get("illust_id"))
-        except Exception as exc:
-            raise JobPermanentError("payload.illust_id is required") from exc
-        if illust_id <= 0:
-            raise JobPermanentError("payload.illust_id is required")
-
-        source_import_id = _parse_source_import_id(job)
-
+    async def _hydrate_single_illust(*, illust_id: int, source_import_id: int | None) -> None:
         now_dt = datetime.now(timezone.utc)
         now_epoch = float(time.time())
         runtime = await load_runtime_config(engine)
@@ -702,5 +906,92 @@ def build_hydrate_metadata_handler(
         if last_exc is None:
             raise RuntimeError("hydrate_metadata failed")
         raise last_exc
+
+    async def _handler(job: dict[str, Any]) -> None:
+        payload_json = str(job.get("payload_json") or "")
+        payload = _parse_payload(payload_json)
+
+        hydration_run_id = _as_int(payload.get("hydration_run_id"), default=0)
+        if hydration_run_id > 0:
+            job_id = _as_int(job.get("id"), default=0)
+            worker_id = str(job.get("locked_by") or "").strip()
+            if job_id <= 0 or not worker_id:
+                raise JobPermanentError("Invalid job state")
+
+            run_state = await _load_run_state(int(hydration_run_id))
+            status = str(run_state.get("status") or "")
+            if status in {"paused", "canceled"}:
+                await _release_job_lock(job_id=int(job_id), worker_id=worker_id, status=status, run_after=None)
+                return
+            if status not in {"pending", "running"}:
+                await _release_job_lock(job_id=int(job_id), worker_id=worker_id, status="completed", run_after=None)
+                return
+
+            await _mark_run_running(int(hydration_run_id))
+
+            criteria = run_state.get("criteria") if isinstance(run_state.get("criteria"), dict) else {}
+            missing = _missing_set_from_criteria(criteria)
+            missing_predicate_sql = _build_missing_predicate_sql(missing)
+
+            cursor_image_id = int(run_state.get("cursor_image_id") or 0)
+            batch_size = _as_int(os.environ.get("HYDRATION_RUN_BATCH_SIZE"), default=10)
+            batch_size = max(1, min(int(batch_size), 200))
+
+            processed = 0
+            for _ in range(batch_size):
+                candidate = await _pick_next_candidate(
+                    cursor_image_id=int(cursor_image_id),
+                    missing_predicate_sql=missing_predicate_sql,
+                )
+                if candidate is None:
+                    await _mark_run_completed(int(hydration_run_id))
+                    return
+
+                image_id, illust_id = candidate
+
+                try:
+                    await _hydrate_single_illust(illust_id=int(illust_id), source_import_id=None)
+                except JobDeferError:
+                    raise
+                except Exception as exc:
+                    await _update_run_progress(
+                        int(hydration_run_id),
+                        cursor_image_id=int(image_id),
+                        cursor_illust_id=int(illust_id),
+                        processed_inc=1,
+                        success_inc=0,
+                        failed_inc=1,
+                        last_error=f"{type(exc).__name__}: {exc}",
+                    )
+                    cursor_image_id = int(image_id)
+                    processed += 1
+                    continue
+
+                await _update_run_progress(
+                    int(hydration_run_id),
+                    cursor_image_id=int(image_id),
+                    cursor_illust_id=int(illust_id),
+                    processed_inc=1,
+                    success_inc=1,
+                    failed_inc=0,
+                    last_error=None,
+                )
+                cursor_image_id = int(image_id)
+                processed += 1
+
+            if processed > 0:
+                run_after = iso_utc_ms(datetime.now(timezone.utc) + timedelta(seconds=1))
+                await _release_job_lock(job_id=int(job_id), worker_id=worker_id, status="pending", run_after=run_after)
+            return
+
+        try:
+            illust_id = int(payload.get("illust_id"))
+        except Exception as exc:
+            raise JobPermanentError("payload.illust_id is required") from exc
+        if illust_id <= 0:
+            raise JobPermanentError("payload.illust_id is required")
+
+        source_import_id = _parse_source_import_id(job)
+        await _hydrate_single_illust(illust_id=int(illust_id), source_import_id=source_import_id)
 
     return _handler
