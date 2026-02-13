@@ -15,7 +15,7 @@ describe("ImagesPage", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
-        if (url.endsWith("/images?limit=50")) {
+        if (url.endsWith("/images?limit=50&r18=2")) {
           return new Response(
             JSON.stringify({
               ok: true,

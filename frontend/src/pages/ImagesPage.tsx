@@ -51,8 +51,8 @@ const columns: ColumnsType<ImageItem> = [
 
 export function ImagesPage() {
   const q = useQuery({
-    queryKey: ["public", "images", { limit: 50 }],
-    queryFn: () => apiJson<ImagesListResponse>("/images?limit=50"),
+    queryKey: ["public", "images", { limit: 50, r18: 2 }],
+    queryFn: () => apiJson<ImagesListResponse>("/images?limit=50&r18=2"),
   });
 
   return (
@@ -86,4 +86,3 @@ export function ImagesPage() {
     </Space>
   );
 }
-
