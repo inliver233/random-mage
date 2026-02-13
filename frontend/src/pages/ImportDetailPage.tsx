@@ -81,6 +81,15 @@ export function ImportDetailPage() {
             <Alert type="info" showIcon message="Import in progress (auto refresh every 1s)" />
           ) : null}
 
+          {q.data?.item.job && q.data.item.job.status === "pending" ? (
+            <Alert
+              type="warning"
+              showIcon
+              message="Job is pending"
+              description="If it stays pending, start the worker process (python -m app.worker) or run the docker-compose worker service."
+            />
+          ) : null}
+
           <Card title="Summary">
             <Descriptions size="small" column={2}>
               <Descriptions.Item label="created_at">{q.data?.item.import.created_at}</Descriptions.Item>

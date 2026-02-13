@@ -13,6 +13,18 @@ type ProxyEndpointItem = {
   status: string | null;
   blacklisted_until: string | null;
   last_error: string | null;
+  success_count: number;
+  failure_count: number;
+  last_ok_at: string | null;
+  last_fail_at: string | null;
+  pools: Array<{
+    id: string;
+    name: string;
+    pool_enabled: boolean;
+    member_enabled: boolean;
+    weight: number;
+  }>;
+  bindings: { primary_count: number; override_count: number };
 };
 
 type ProxiesEndpointsResponse = {
@@ -67,6 +79,25 @@ const columns: ColumnsType<ProxyEndpointItem> = [
   { title: "URI", dataIndex: "uri_masked", key: "uri_masked" },
   { title: "Enabled", dataIndex: "enabled", key: "enabled", render: (v) => String(Boolean(v)) },
   { title: "Status", dataIndex: "status", key: "status" },
+  {
+    title: "Pools",
+    key: "pools",
+    render: (_, r) =>
+      (r.pools || []).length
+        ? (r.pools || [])
+            .map((p) => `${p.name}(#${p.id}) w=${p.weight} ${p.pool_enabled && p.member_enabled ? "on" : "off"}`)
+            .join(", ")
+        : "-",
+  },
+  {
+    title: "Bindings",
+    key: "bindings",
+    render: (_, r) =>
+      r.bindings ? `primary=${r.bindings.primary_count}, override=${r.bindings.override_count}` : "-",
+  },
+  { title: "OK/Fail", key: "ok_fail", render: (_, r) => `${r.success_count}/${r.failure_count}` },
+  { title: "Last OK", dataIndex: "last_ok_at", key: "last_ok_at", render: (v) => v || "-" },
+  { title: "Last Fail", dataIndex: "last_fail_at", key: "last_fail_at", render: (v) => v || "-" },
   { title: "Latency(ms)", dataIndex: "latency_ms", key: "latency_ms" },
   { title: "Blacklisted", dataIndex: "blacklisted_until", key: "blacklisted_until" },
   { title: "Last error", dataIndex: "last_error", key: "last_error" },
@@ -285,7 +316,9 @@ export function ProxiesPage() {
           <Button type="primary" onClick={() => probe.mutate()} loading={probe.isPending}>
             探测健康（入队）
           </Button>
-          <Button disabled>刷新代理</Button>
+          <Button onClick={() => q.refetch()} loading={q.isFetching}>
+            刷新列表
+          </Button>
         </Space>
         {probe.isPending ? <Alert type="info" showIcon message="Enqueueing probe job..." style={{ marginBottom: 12 }} /> : null}
         {probeErrorMessage ? <Alert type="error" showIcon message={probeErrorMessage} style={{ marginBottom: 12 }} /> : null}
@@ -322,6 +355,7 @@ export function ProxiesPage() {
               dataSource={q.data.items}
               pagination={false}
               size="small"
+              scroll={{ x: 1400 }}
               style={{ marginTop: 12 }}
             />
           </>

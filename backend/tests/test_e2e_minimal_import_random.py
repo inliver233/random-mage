@@ -50,12 +50,13 @@ def test_e2e_import_10_then_random_json_ok_and_no_match(tmp_path: Path, monkeypa
         assert import_body["deduped"] == 0
         assert import_body["request_id"] == "req_test"
 
-        async def _run_worker() -> None:
-            dispatcher = build_default_dispatcher(app.state.engine)
-            ran = await poll_and_execute_jobs(app.state.engine, dispatcher, worker_id="test-worker", max_jobs=10)
-            assert ran >= 1
+        if not bool(import_body.get("executed_inline")):
+            async def _run_worker() -> None:
+                dispatcher = build_default_dispatcher(app.state.engine)
+                ran = await poll_and_execute_jobs(app.state.engine, dispatcher, worker_id="test-worker", max_jobs=10)
+                assert ran >= 1
 
-        asyncio.run(_run_worker())
+            asyncio.run(_run_worker())
 
         ok_resp = client.get("/random", params={"format": "json", "attempts": 1, "r18_strict": 0})
         assert ok_resp.status_code == 200

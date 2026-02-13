@@ -18,6 +18,8 @@ from app.core.crypto import FieldEncryptor, mask_secret
 from app.core.errors import ErrorCode
 from app.core.failover import classify_pixiv_rate_limit, pixiv_rate_limit_backoff_seconds
 from app.core.metrics import TOKEN_REFRESH_FAIL_TOTAL
+from app.core.proxy_routing import select_proxy_uri_for_url
+from app.core.runtime_settings import RuntimeConfig, load_runtime_config
 from app.core.time import iso_utc_ms
 from app.db.models.image_tags import ImageTag
 from app.db.models.images import Image
@@ -26,7 +28,7 @@ from app.db.models.tags import Tag
 from app.db.session import create_sessionmaker, with_sqlite_busy_retry
 from app.jobs.errors import JobDeferError, JobPermanentError
 from app.pixiv.access_token_cache import AccessTokenCache
-from app.pixiv.oauth import PixivOauthConfig, PixivOauthError, refresh_access_token
+from app.pixiv.oauth import OAUTH_TOKEN_PATH, PixivOauthConfig, PixivOauthError, refresh_access_token
 from app.pixiv.refresh_backoff import refresh_backoff_seconds
 from app.pixiv.token_strategy import NoTokenAvailable, TokenCandidate, choose_token
 
@@ -335,10 +337,27 @@ def build_hydrate_metadata_handler(
 
         await with_sqlite_busy_retry(_op)
 
-    async def _get_access_token(token_id: int, *, now_dt: datetime) -> str:
+    async def _get_access_token(token_id: int, *, now_dt: datetime, runtime: RuntimeConfig) -> str:
         async def refresher() -> Any:
             refresh_token = await _get_refresh_token(token_id)
-            token = await refresh_access_token(refresh_token=refresh_token, config=oauth_config, transport=transport)
+            proxy_uri = None
+            oauth_url = oauth_config.base_url.rstrip("/") + OAUTH_TOKEN_PATH
+            picked_proxy = await select_proxy_uri_for_url(
+                engine,
+                settings,
+                runtime,
+                url=oauth_url,
+                token_id=int(token_id),
+            )
+            if picked_proxy is not None:
+                proxy_uri = picked_proxy.uri
+
+            token = await refresh_access_token(
+                refresh_token=refresh_token,
+                config=oauth_config,
+                transport=transport,
+                proxy=proxy_uri,
+            )
             rotated = token.refresh_token
             if rotated:
                 await _rotate_refresh_token(token_id, rotated_refresh_token=rotated, now_dt=now_dt)
@@ -351,9 +370,22 @@ def build_hydrate_metadata_handler(
         *,
         illust_id: int,
         access_token: str,
+        token_id: int,
+        runtime: RuntimeConfig,
     ) -> dict[str, Any]:
         headers = oauth_config.build_headers(client_time=datetime.now(timezone.utc).isoformat(timespec="seconds"))
         headers["Authorization"] = f"Bearer {access_token}"
+
+        proxy_uri = None
+        picked_proxy = await select_proxy_uri_for_url(
+            engine,
+            settings,
+            runtime,
+            url=PIXIV_ILLUST_DETAIL_URL,
+            token_id=int(token_id),
+        )
+        if picked_proxy is not None:
+            proxy_uri = picked_proxy.uri
 
         client_kwargs: dict[str, Any] = {
             "timeout": httpx.Timeout(30.0, connect=10.0),
@@ -361,6 +393,8 @@ def build_hydrate_metadata_handler(
         }
         if transport is not None:
             client_kwargs["transport"] = transport
+        if proxy_uri:
+            client_kwargs["proxy"] = proxy_uri
 
         async with httpx.AsyncClient(**client_kwargs) as client:
             resp = await client.get(
@@ -513,6 +547,7 @@ def build_hydrate_metadata_handler(
 
         now_dt = datetime.now(timezone.utc)
         now_epoch = float(time.time())
+        runtime = await load_runtime_config(engine)
 
         tried: set[int] = set()
         last_exc: BaseException | None = None
@@ -522,7 +557,7 @@ def build_hydrate_metadata_handler(
             tried.add(int(token_id))
 
             try:
-                access_token = await _get_access_token(token_id, now_dt=now_dt)
+                access_token = await _get_access_token(token_id, now_dt=now_dt, runtime=runtime)
             except PixivOauthError as exc:
                 TOKEN_REFRESH_FAIL_TOTAL.inc()
                 attempt = 0
@@ -561,7 +596,12 @@ def build_hydrate_metadata_handler(
                 continue
 
             try:
-                data = await _fetch_illust_detail(illust_id=illust_id, access_token=access_token)
+                data = await _fetch_illust_detail(
+                    illust_id=illust_id,
+                    access_token=access_token,
+                    token_id=int(token_id),
+                    runtime=runtime,
+                )
             except httpx.HTTPStatusError as exc:
                 status = int(getattr(exc.response, "status_code", 0) or 0)
                 body_text = getattr(exc.response, "text", None)

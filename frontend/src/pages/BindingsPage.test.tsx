@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import React from "react";
+import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BindingsPage } from "./BindingsPage";
@@ -22,12 +23,13 @@ describe("BindingsPage", () => {
               items: [
                 {
                   id: "1",
-                  token_id: "t1",
-                  proxy_id: "p1",
-                  is_primary: true,
-                  override_proxy_id: null,
+                  token: { id: "1", label: "acc1" },
+                  pool: { id: "1", name: "pixiv" },
+                  primary_proxy: { id: "10", scheme: "http", host: "1.2.3.4", port: 8080, username: "u1" },
+                  override_proxy: null,
                   override_expires_at: null,
-                  reason: null,
+                  effective_proxy_id: "10",
+                  effective_mode: "primary",
                 },
               ],
               request_id: "req_bindings",
@@ -46,14 +48,16 @@ describe("BindingsPage", () => {
   it("renders list", async () => {
     const qc = makeClient();
     render(
-      <QueryClientProvider client={qc}>
-        <BindingsPage />
-      </QueryClientProvider>,
+      <MemoryRouter initialEntries={["/admin/bindings?pool_id=1"]}>
+        <QueryClientProvider client={qc}>
+          <BindingsPage />
+        </QueryClientProvider>
+      </MemoryRouter>,
     );
 
     expect(await screen.findByText("Bindings")).toBeInTheDocument();
-    expect(await screen.findByText("t1")).toBeInTheDocument();
+    expect(await screen.findByText("acc1 (#1)")).toBeInTheDocument();
+    expect(await screen.findByText("pixiv (#1)")).toBeInTheDocument();
     expect(await screen.findByText(/request_id:\s*req_bindings/)).toBeInTheDocument();
   });
 });
-

@@ -8,6 +8,9 @@ import { DashboardPage } from "./DashboardPage";
 import { ImportPage } from "./ImportPage";
 import { PlaygroundPage } from "./PlaygroundPage";
 import { TokensPage } from "./TokensPage";
+import { ProxiesPage } from "./ProxiesPage";
+import { JobsPage } from "./JobsPage";
+import { ImagesPage } from "./ImagesPage";
 
 function makeClient() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -20,7 +23,6 @@ describe("DashboardPage", () => {
   });
 
   beforeEach(() => {
-    let proxiesCalls = 0;
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
@@ -40,48 +42,26 @@ describe("DashboardPage", () => {
             { status: 200, headers: { "Content-Type": "application/json" } },
           );
         }
-        if (url.endsWith("/admin/api/tokens")) {
+        if (url.endsWith("/admin/api/summary")) {
           return new Response(
             JSON.stringify({
               ok: true,
-              items: [
-                {
-                  id: "1",
-                  label: "acc1",
-                  enabled: true,
-                  refresh_token_masked: "***",
-                  weight: 1.0,
-                  error_count: 0,
-                  backoff_until: null,
-                  last_ok_at: null,
-                  last_fail_at: null,
-                },
-                {
-                  id: "2",
-                  label: "acc2",
-                  enabled: false,
-                  refresh_token_masked: "***",
-                  weight: 1.0,
-                  error_count: 3,
-                  backoff_until: null,
-                  last_ok_at: null,
-                  last_fail_at: null,
-                },
-              ],
-              request_id: "req_tokens",
+              counts: {
+                images: { total: 14, enabled: 14 },
+                tokens: { total: 2, enabled: 1 },
+                proxies: { endpoints_total: 1, endpoints_enabled: 1 },
+                proxy_pools: { total: 0, enabled: 0 },
+                bindings: { total: 0 },
+                jobs: { counts: { pending: 2, running: 0, failed: 3 } },
+                worker: { last_seen_at: "2026-02-13T00:00:00Z" },
+              },
+              request_id: "req_summary",
             }),
             {
             status: 200,
             headers: { "Content-Type": "application/json" },
             },
           );
-        }
-        if (url.endsWith("/admin/api/proxies/endpoints")) {
-          proxiesCalls += 1;
-          return new Response(JSON.stringify({ ok: true, items: [{}], request_id: `req_proxies_${proxiesCalls}` }), {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          });
         }
         if (url.includes("/admin/api/jobs?status=failed")) {
           return new Response(JSON.stringify({ ok: true, items: [{}, {}, {}], next_cursor: "", request_id: "req_jobs" }), {
@@ -112,15 +92,19 @@ describe("DashboardPage", () => {
             <Route path="/admin" element={<DashboardPage />} />
             <Route path="/admin/import" element={<ImportPage />} />
             <Route path="/admin/tokens" element={<TokensPage />} />
+            <Route path="/admin/proxies" element={<ProxiesPage />} />
+            <Route path="/admin/jobs" element={<JobsPage />} />
+            <Route path="/admin/images" element={<ImagesPage />} />
             <Route path="/admin/random" element={<PlaygroundPage />} />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText("count: 2")).toBeInTheDocument();
-    expect(await screen.findByText("count: 1")).toBeInTheDocument();
-    expect(await screen.findByText("count: 3")).toBeInTheDocument();
+    expect(await screen.findByText("worker.last_seen_at: 2026-02-13T00:00:00Z")).toBeInTheDocument();
+    expect(await screen.findByText("total: 14")).toBeInTheDocument();
+    expect(await screen.findByText("total: 2")).toBeInTheDocument();
+    expect(await screen.findByText("endpoints: 1/1 enabled")).toBeInTheDocument();
   });
 
   it("navigates to import", async () => {
@@ -132,13 +116,16 @@ describe("DashboardPage", () => {
             <Route path="/admin" element={<DashboardPage />} />
             <Route path="/admin/import" element={<ImportPage />} />
             <Route path="/admin/tokens" element={<TokensPage />} />
+            <Route path="/admin/proxies" element={<ProxiesPage />} />
+            <Route path="/admin/jobs" element={<JobsPage />} />
+            <Route path="/admin/images" element={<ImagesPage />} />
             <Route path="/admin/random" element={<PlaygroundPage />} />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText("Settings")).toBeInTheDocument();
+    expect(await screen.findByText("Worker / Queue")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /去\s*导\s*入/ }));
     expect(await screen.findByText("Import")).toBeInTheDocument();
   });
@@ -152,13 +139,16 @@ describe("DashboardPage", () => {
             <Route path="/admin" element={<DashboardPage />} />
             <Route path="/admin/import" element={<ImportPage />} />
             <Route path="/admin/tokens" element={<TokensPage />} />
+            <Route path="/admin/proxies" element={<ProxiesPage />} />
+            <Route path="/admin/jobs" element={<JobsPage />} />
+            <Route path="/admin/images" element={<ImagesPage />} />
             <Route path="/admin/random" element={<PlaygroundPage />} />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText("Settings")).toBeInTheDocument();
+    expect(await screen.findByText("Worker / Queue")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /创\s*建\s*补\s*全\s*任\s*务/ }));
     expect(await screen.findByText("Hydration run created")).toBeInTheDocument();
     expect(await screen.findByText(/hydration_run_id:\s*10/)).toBeInTheDocument();
@@ -174,18 +164,21 @@ describe("DashboardPage", () => {
             <Route path="/admin" element={<DashboardPage />} />
             <Route path="/admin/import" element={<ImportPage />} />
             <Route path="/admin/tokens" element={<TokensPage />} />
+            <Route path="/admin/proxies" element={<ProxiesPage />} />
+            <Route path="/admin/jobs" element={<JobsPage />} />
+            <Route path="/admin/images" element={<ImagesPage />} />
             <Route path="/admin/random" element={<PlaygroundPage />} />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText("Settings")).toBeInTheDocument();
+    expect(await screen.findByText("Worker / Queue")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /去\s*添\s*加\s*Token/ }));
     expect(await screen.findByRole("button", { name: /新\s*增\s*Token/ })).toBeInTheDocument();
   });
 
-  it("refreshes proxies", async () => {
+  it("navigates to proxies", async () => {
     const qc = makeClient();
     render(
       <QueryClientProvider client={qc}>
@@ -194,15 +187,18 @@ describe("DashboardPage", () => {
             <Route path="/admin" element={<DashboardPage />} />
             <Route path="/admin/import" element={<ImportPage />} />
             <Route path="/admin/tokens" element={<TokensPage />} />
+            <Route path="/admin/proxies" element={<ProxiesPage />} />
+            <Route path="/admin/jobs" element={<JobsPage />} />
+            <Route path="/admin/images" element={<ImagesPage />} />
             <Route path="/admin/random" element={<PlaygroundPage />} />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText("request_id: req_proxies_1")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /刷\s*新\s*代\s*理/ }));
-    expect(await screen.findByText("request_id: req_proxies_2")).toBeInTheDocument();
+    expect(await screen.findByText("Worker / Queue")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /去\s*添\s*加\s*代\s*理/ }));
+    expect(await screen.findByText("Proxies")).toBeInTheDocument();
   });
 
   it("navigates to playground", async () => {
@@ -214,13 +210,16 @@ describe("DashboardPage", () => {
             <Route path="/admin" element={<DashboardPage />} />
             <Route path="/admin/import" element={<ImportPage />} />
             <Route path="/admin/tokens" element={<TokensPage />} />
+            <Route path="/admin/proxies" element={<ProxiesPage />} />
+            <Route path="/admin/jobs" element={<JobsPage />} />
+            <Route path="/admin/images" element={<ImagesPage />} />
             <Route path="/admin/random" element={<PlaygroundPage />} />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText("Settings")).toBeInTheDocument();
+    expect(await screen.findByText("Worker / Queue")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /打\s*开\s*Playground/ }));
     expect(await screen.findByText("Random Playground")).toBeInTheDocument();
   });

@@ -5,10 +5,30 @@ import { useNavigate } from "react-router-dom";
 
 import { ApiError, apiJson } from "../api/client";
 
+type SummaryResponse = {
+  ok: true;
+  counts: {
+    images: { total: number; enabled: number };
+    tokens: { total: number; enabled: number };
+    proxies: { endpoints_total: number; endpoints_enabled: number };
+    proxy_pools: { total: number; enabled: number };
+    bindings: { total: number };
+    jobs: { counts: Record<string, number> };
+    worker: { last_seen_at: string | null };
+  };
+  request_id: string;
+};
+
 type SettingsResponse = {
   ok: true;
   settings: {
-    proxy: { enabled: boolean; fail_closed: boolean; route_mode: string; allowlist_domains: string[] };
+    proxy: {
+      enabled: boolean;
+      fail_closed: boolean;
+      route_mode: string;
+      allowlist_domains: string[];
+      default_pool_id?: string;
+    };
     random: Record<string, unknown>;
     security: { hide_origin_url_in_public_json: boolean };
     rate_limit: Record<string, unknown>;
@@ -16,8 +36,6 @@ type SettingsResponse = {
   request_id: string;
 };
 
-type TokensResponse = { ok: true; items: unknown[]; request_id: string };
-type ProxiesResponse = { ok: true; items: unknown[]; request_id: string };
 type JobsResponse = { ok: true; items: unknown[]; next_cursor: string; request_id: string };
 type CreateHydrationRunResponse = { ok: true; hydration_run_id: string; job_id: string; request_id: string };
 
@@ -53,14 +71,9 @@ export function DashboardPage() {
     queryFn: () => apiJson<SettingsResponse>("/admin/api/settings"),
   });
 
-  const tokens = useQuery({
-    queryKey: ["admin", "tokens"],
-    queryFn: () => apiJson<TokensResponse>("/admin/api/tokens"),
-  });
-
-  const proxies = useQuery({
-    queryKey: ["admin", "proxies", "endpoints"],
-    queryFn: () => apiJson<ProxiesResponse>("/admin/api/proxies/endpoints"),
+  const summary = useQuery({
+    queryKey: ["admin", "summary"],
+    queryFn: () => apiJson<SummaryResponse>("/admin/api/summary"),
   });
 
   const failedJobs = useQuery({
@@ -69,8 +82,25 @@ export function DashboardPage() {
   });
 
   const proxyEnabled = settings.data?.settings.proxy.enabled ?? false;
-  const tokenCount = tokens.data?.items.length ?? 0;
-  const proxyCount = proxies.data?.items.length ?? 0;
+  const defaultPoolId = settings.data?.settings.proxy.default_pool_id ?? "";
+
+  const counts = summary.data?.counts;
+  const imageCount = counts?.images.total ?? 0;
+  const imageEnabledCount = counts?.images.enabled ?? 0;
+  const tokenCount = counts?.tokens.total ?? 0;
+  const tokenEnabledCount = counts?.tokens.enabled ?? 0;
+  const proxyCount = counts?.proxies.endpoints_total ?? 0;
+  const proxyEnabledCount = counts?.proxies.endpoints_enabled ?? 0;
+  const proxyPoolCount = counts?.proxy_pools.total ?? 0;
+  const proxyPoolEnabledCount = counts?.proxy_pools.enabled ?? 0;
+  const bindingCount = counts?.bindings.total ?? 0;
+
+  const jobsCounts = counts?.jobs.counts ?? {};
+  const pendingJobs = jobsCounts["pending"] ?? 0;
+  const runningJobs = jobsCounts["running"] ?? 0;
+  const failedJobsTotal = jobsCounts["failed"] ?? 0;
+  const workerLastSeenAt = counts?.worker.last_seen_at ?? null;
+
   const failedJobCount = failedJobs.data?.items.length ?? 0;
 
   return (
@@ -81,9 +111,6 @@ export function DashboardPage() {
         </Button>
         <Button onClick={() => navigate("/admin/tokens")}>去添加 Token</Button>
         <Button onClick={() => navigate("/admin/proxies")}>去添加 代理</Button>
-        <Button onClick={() => proxies.refetch()} loading={proxies.isFetching}>
-          刷新代理
-        </Button>
         <Button onClick={() => navigate("/admin/random")}>打开 Playground</Button>
         <Button onClick={() => createHydration.mutate()} loading={createHydration.isPending}>
           创建补全任务
@@ -115,88 +142,131 @@ export function DashboardPage() {
 
       <Row gutter={[16, 16]}>
         <Col xs={24} md={12} xl={6}>
-          <Card title="Settings">
-            {settings.isLoading ? (
+          <Card title="Worker / Queue">
+            {summary.isLoading ? (
+              <Skeleton active />
+            ) : summary.isError ? (
+              <Alert
+                type="error"
+                showIcon
+                message="Failed to load summary"
+                description={requestIdFromError(summary.error) ? `request_id: ${requestIdFromError(summary.error)}` : ""}
+              />
+            ) : (
+              <Space direction="vertical">
+                <Typography.Text>worker.last_seen_at: {workerLastSeenAt ? workerLastSeenAt : "(none)"}</Typography.Text>
+                <Typography.Text>jobs.pending: {pendingJobs}</Typography.Text>
+                <Typography.Text>jobs.running: {runningJobs}</Typography.Text>
+                <Typography.Text>jobs.failed: {failedJobsTotal}</Typography.Text>
+              </Space>
+            )}
+          </Card>
+        </Col>
+
+        <Col xs={24} md={12} xl={6}>
+          <Card title="Images">
+            {summary.isLoading ? (
+              <Skeleton active />
+            ) : summary.isError ? (
+              <Alert
+                type="error"
+                showIcon
+                message="Failed to load summary"
+                description={requestIdFromError(summary.error) ? `request_id: ${requestIdFromError(summary.error)}` : ""}
+              />
+            ) : (
+              <Space direction="vertical">
+                <Typography.Text>total: {imageCount}</Typography.Text>
+                <Typography.Text>enabled: {imageEnabledCount}</Typography.Text>
+                <Button size="small" onClick={() => navigate("/admin/images")}>
+                  打开 Images
+                </Button>
+              </Space>
+            )}
+          </Card>
+        </Col>
+
+        <Col xs={24} md={12} xl={6}>
+          <Card title="Tokens">
+            {summary.isLoading ? (
+              <Skeleton active />
+            ) : summary.isError ? (
+              <Alert
+                type="error"
+                showIcon
+                message="Failed to load summary"
+                description={requestIdFromError(summary.error) ? `request_id: ${requestIdFromError(summary.error)}` : ""}
+              />
+            ) : (
+              <Space direction="vertical">
+                <Typography.Text>total: {tokenCount}</Typography.Text>
+                <Typography.Text>enabled: {tokenEnabledCount}</Typography.Text>
+                <Button size="small" onClick={() => navigate("/admin/tokens")}>
+                  打开 Tokens
+                </Button>
+              </Space>
+            )}
+          </Card>
+        </Col>
+
+        <Col xs={24} md={12} xl={6}>
+          <Card title="Proxies">
+            {settings.isLoading || summary.isLoading ? (
               <Skeleton active />
             ) : settings.isError ? (
               <Alert
                 type="error"
                 showIcon
                 message="Failed to load settings"
-                description={
-                  requestIdFromError(settings.error) ? `request_id: ${requestIdFromError(settings.error)}` : ""
-                }
+                description={requestIdFromError(settings.error) ? `request_id: ${requestIdFromError(settings.error)}` : ""}
+              />
+            ) : summary.isError ? (
+              <Alert
+                type="error"
+                showIcon
+                message="Failed to load summary"
+                description={requestIdFromError(summary.error) ? `request_id: ${requestIdFromError(summary.error)}` : ""}
               />
             ) : (
               <Space direction="vertical">
                 <Typography.Text>proxy.enabled: {String(proxyEnabled)}</Typography.Text>
-                <Typography.Text type="secondary">request_id: {settings.data?.request_id}</Typography.Text>
+                <Typography.Text>default_pool_id: {defaultPoolId || "(none)"}</Typography.Text>
+                <Typography.Text>endpoints: {proxyEnabledCount}/{proxyCount} enabled</Typography.Text>
+                <Typography.Text>pools: {proxyPoolEnabledCount}/{proxyPoolCount} enabled</Typography.Text>
+                <Typography.Text>bindings: {bindingCount}</Typography.Text>
+                <Button size="small" onClick={() => navigate("/admin/proxies")}>
+                  打开 Proxies
+                </Button>
               </Space>
             )}
           </Card>
         </Col>
+      </Row>
 
-      <Col xs={24} md={12} xl={6}>
-        <Card title="Tokens">
-          {tokens.isLoading ? (
-            <Skeleton active />
-          ) : tokens.isError ? (
-            <Alert
-              type="error"
-              showIcon
-              message="Failed to load tokens"
-              description={requestIdFromError(tokens.error) ? `request_id: ${requestIdFromError(tokens.error)}` : ""}
-            />
-          ) : (
-            <Space direction="vertical">
-              <Typography.Text>count: {tokenCount}</Typography.Text>
-              <Typography.Text type="secondary">request_id: {tokens.data?.request_id}</Typography.Text>
-            </Space>
-          )}
-        </Card>
-      </Col>
-
-      <Col xs={24} md={12} xl={6}>
-        <Card title="Proxies">
-          {proxies.isLoading ? (
-            <Skeleton active />
-          ) : proxies.isError ? (
-            <Alert
-              type="error"
-              showIcon
-              message="Failed to load proxies"
-              description={requestIdFromError(proxies.error) ? `request_id: ${requestIdFromError(proxies.error)}` : ""}
-            />
-          ) : (
-            <Space direction="vertical">
-              <Typography.Text>count: {proxyCount}</Typography.Text>
-              <Typography.Text type="secondary">request_id: {proxies.data?.request_id}</Typography.Text>
-            </Space>
-          )}
-        </Card>
-      </Col>
-
-      <Col xs={24} md={12} xl={6}>
-        <Card title="Failed Jobs (latest 10)">
-          {failedJobs.isLoading ? (
-            <Skeleton active />
-          ) : failedJobs.isError ? (
-            <Alert
-              type="error"
-              showIcon
-              message="Failed to load jobs"
-              description={
-                requestIdFromError(failedJobs.error) ? `request_id: ${requestIdFromError(failedJobs.error)}` : ""
-              }
-            />
-          ) : (
-            <Space direction="vertical">
-              <Typography.Text>count: {failedJobCount}</Typography.Text>
-              <Typography.Text type="secondary">request_id: {failedJobs.data?.request_id}</Typography.Text>
-            </Space>
-          )}
-        </Card>
-      </Col>
+      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+        <Col span={24}>
+          <Card title="Failed Jobs (latest 10)">
+            {failedJobs.isLoading ? (
+              <Skeleton active />
+            ) : failedJobs.isError ? (
+              <Alert
+                type="error"
+                showIcon
+                message="Failed to load jobs"
+                description={
+                  requestIdFromError(failedJobs.error) ? `request_id: ${requestIdFromError(failedJobs.error)}` : ""
+                }
+              />
+            ) : (
+              <Space direction="vertical">
+                <Typography.Text>count: {failedJobCount}</Typography.Text>
+                <Button size="small" onClick={() => navigate("/admin/jobs")}>
+                  打开 Jobs
+                </Button>
+              </Space>
+            )}
+          </Card>
+        </Col>
       </Row>
     </>
   );

@@ -16,11 +16,15 @@ from app.api.admin.deps import get_admin_claims
 from app.core.data_files import get_sqlite_db_dir, make_file_ref
 from app.core.errors import ApiError, ErrorCode
 from app.core.request_id import get_or_create_request_id
+from app.core.time import iso_utc_ms
 from app.core.pixiv_urls import parse_pixiv_original_url
 from app.db.models.images import Image
 from app.db.models.imports import Import
 from app.db.models.jobs import JobRow
-from app.db.session import create_sessionmaker
+from app.db.session import create_sessionmaker, with_sqlite_busy_retry
+from app.jobs.dispatch import JobDispatcher
+from app.jobs.executor import execute_claimed_job
+from app.jobs.handlers.import_images import build_import_images_handler
 
 router = APIRouter()
 
@@ -54,6 +58,38 @@ def _max_import_text_bytes() -> int:
     except Exception:
         return default
     return max(1024, min(int(value), 50 * 1024 * 1024))
+
+
+def _import_inline_max_accepted() -> int:
+    default = 200
+    raw = (os.environ.get("IMPORT_INLINE_MAX_ACCEPTED") or "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except Exception:
+        return default
+    return max(0, min(int(value), 10_000))
+
+
+async def _claim_job_by_id(engine, *, job_id: int, worker_id: str, now: str) -> dict[str, Any] | None:
+    sql = """
+UPDATE jobs
+SET status='running',
+    locked_by=:worker_id,
+    locked_at=:now,
+    updated_at=:now
+WHERE id=:id AND status='pending'
+RETURNING *;
+""".strip()
+
+    async def _op() -> dict[str, Any] | None:
+        async with engine.begin() as conn:
+            result = await conn.exec_driver_sql(sql, {"id": int(job_id), "worker_id": worker_id, "now": now})
+            row = result.mappings().first()
+            return dict(row) if row else None
+
+    return await with_sqlite_busy_retry(_op)
 
 
 def _parse_import_text(
@@ -248,10 +284,24 @@ async def create_import(
         import_id = imp.id
         job_id = job.id
 
+    inline_max = _import_inline_max_accepted()
+    executed_inline = False
+    if accepted > 0 and accepted <= inline_max:
+        now = iso_utc_ms()
+        actor = str(_claims.get("sub") or "admin").strip() or "admin"
+        worker_id = f"inline-import:{actor}"
+        claimed = await _claim_job_by_id(engine, job_id=int(job_id), worker_id=worker_id, now=now)
+        if claimed is not None:
+            dispatcher = JobDispatcher()
+            dispatcher.register("import_images", build_import_images_handler(engine))
+            await execute_claimed_job(engine, dispatcher, job_row=claimed, worker_id=worker_id)
+            executed_inline = True
+
     return {
         "ok": True,
         "import_id": str(import_id),
         "job_id": str(job_id),
+        "executed_inline": executed_inline,
         "accepted": accepted,
         "deduped": deduped,
         "errors": [asdict(e) for e in errors[:200]],

@@ -9,11 +9,13 @@ from fastapi import APIRouter, Depends, Request
 from app.api.admin.deps import get_admin_claims
 from app.core.crypto import FieldEncryptor, mask_secret
 from app.core.errors import ApiError, ErrorCode
+from app.core.proxy_routing import select_proxy_uri_for_url
 from app.core.request_id import get_or_create_request_id
+from app.core.runtime_settings import load_runtime_config
 from app.core.time import iso_utc_ms
 from app.db.models.pixiv_tokens import PixivToken
 from app.db.session import create_sessionmaker
-from app.pixiv.oauth import PixivOauthConfig, PixivOauthError, refresh_access_token
+from app.pixiv.oauth import OAUTH_TOKEN_PATH, PixivOauthConfig, PixivOauthError, refresh_access_token
 from app.pixiv.refresh_backoff import refresh_backoff_seconds
 
 router = APIRouter()
@@ -197,10 +199,22 @@ async def test_refresh_token(
         now = iso_utc_ms()
 
         try:
+            runtime = await load_runtime_config(engine)
+            oauth_url = config.base_url.rstrip("/") + OAUTH_TOKEN_PATH
+            picked_proxy = await select_proxy_uri_for_url(
+                engine,
+                settings,
+                runtime,
+                url=oauth_url,
+                token_id=int(token_id),
+            )
+            proxy_uri = picked_proxy.uri if picked_proxy is not None else None
+
             token = await refresh_access_token(
                 refresh_token=refresh_token,
                 config=config,
                 transport=transport,
+                proxy=proxy_uri,
             )
         except PixivOauthError as exc:
             new_error_count = int(row.error_count or 0) + 1
@@ -262,7 +276,17 @@ async def test_refresh_token(
 
         await session.commit()
 
-    return {"ok": True, "expires_in": int(token.expires_in), "user_id": token.user_id, "request_id": rid}
+    proxy_details: dict[str, Any] | None = None
+    if picked_proxy is not None:
+        proxy_details = {"endpoint_id": str(picked_proxy.endpoint_id), "pool_id": str(picked_proxy.pool_id)}
+
+    return {
+        "ok": True,
+        "expires_in": int(token.expires_in),
+        "user_id": token.user_id,
+        "proxy": proxy_details,
+        "request_id": rid,
+    }
 
 
 @router.post("/tokens/{token_id}/reset-failures")

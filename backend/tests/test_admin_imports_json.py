@@ -53,15 +53,17 @@ def test_admin_imports_json_happy_path(tmp_path: Path, monkeypatch) -> None:
         assert len(body["errors"]) == 1
         assert body["import_id"].isdigit()
         assert body["job_id"].isdigit()
+        executed_inline = bool(body.get("executed_inline"))
         assert body["request_id"] == "req_test"
         assert resp.headers["X-Request-Id"] == "req_test"
 
-        async def _run_worker() -> None:
-            dispatcher = build_default_dispatcher(app.state.engine)
-            ran = await poll_and_execute_jobs(app.state.engine, dispatcher, worker_id="test-worker", max_jobs=10)
-            assert ran >= 1
+        if not executed_inline:
+            async def _run_worker() -> None:
+                dispatcher = build_default_dispatcher(app.state.engine)
+                ran = await poll_and_execute_jobs(app.state.engine, dispatcher, worker_id="test-worker", max_jobs=10)
+                assert ran >= 1
 
-        asyncio.run(_run_worker())
+            asyncio.run(_run_worker())
 
         async def _fetch_import_counts() -> tuple[int, int, int, int]:
             async with app.state.engine.connect() as conn:
@@ -116,17 +118,19 @@ def test_admin_imports_multipart_happy_path(tmp_path: Path, monkeypatch) -> None
         assert len(body["errors"]) == 1
         assert body["import_id"].isdigit()
         assert body["job_id"].isdigit()
+        executed_inline = bool(body.get("executed_inline"))
         assert body["request_id"] == "req_test"
         assert resp.headers["X-Request-Id"] == "req_test"
 
         import_id = int(body["import_id"])
 
-        async def _run_worker() -> None:
-            dispatcher = build_default_dispatcher(app.state.engine)
-            ran = await poll_and_execute_jobs(app.state.engine, dispatcher, worker_id="test-worker", max_jobs=10)
-            assert ran >= 1
+        if not executed_inline:
+            async def _run_worker() -> None:
+                dispatcher = build_default_dispatcher(app.state.engine)
+                ran = await poll_and_execute_jobs(app.state.engine, dispatcher, worker_id="test-worker", max_jobs=10)
+                assert ran >= 1
 
-        asyncio.run(_run_worker())
+            asyncio.run(_run_worker())
 
         async def _fetch_import_counts() -> tuple[int, int, int, int]:
             async with app.state.engine.connect() as conn:
@@ -226,14 +230,17 @@ def test_admin_imports_rollback_disable_and_delete(tmp_path: Path, monkeypatch) 
             json={"text": text, "dry_run": False, "hydrate_on_import": False, "source": "manual"},
         )
         assert create_resp.status_code == 200
-        import_id = int(create_resp.json()["import_id"])
+        create_body = create_resp.json()
+        import_id = int(create_body["import_id"])
+        executed_inline = bool(create_body.get("executed_inline"))
 
-        async def _run_worker() -> None:
-            dispatcher = build_default_dispatcher(app.state.engine)
-            ran = await poll_and_execute_jobs(app.state.engine, dispatcher, worker_id="test-worker", max_jobs=10)
-            assert ran >= 1
+        if not executed_inline:
+            async def _run_worker() -> None:
+                dispatcher = build_default_dispatcher(app.state.engine)
+                ran = await poll_and_execute_jobs(app.state.engine, dispatcher, worker_id="test-worker", max_jobs=10)
+                assert ran >= 1
 
-        asyncio.run(_run_worker())
+            asyncio.run(_run_worker())
 
         disable_resp = client.post(
             f"/admin/api/imports/{import_id}/rollback",

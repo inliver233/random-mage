@@ -114,6 +114,8 @@ services:
 - `FIELD_ENCRYPTION_KEY`：用于加密 refresh_token 与 proxy 密码（Fernet 32 urlsafe base64；生产必须设置）
 - `FIELD_ENCRYPTION_KEY_FILE`：可选；从文件读取 Fernet key（例如挂载 Secret 到容器），优先级低于 `FIELD_ENCRYPTION_KEY`
   - 开发环境（`APP_ENV=dev`）若两者都未设置，会自动生成并写入 `./data/field_encryption_key`
+- `PIXIV_OAUTH_CLIENT_ID` / `PIXIV_OAUTH_CLIENT_SECRET` / `PIXIV_OAUTH_HASH_SECRET`：用于 Pixiv OAuth 刷新与 App API
+  - 开发环境（`APP_ENV=dev`）若为空，后端会使用 Pixiv Android App 默认值
 
 ### 4.2 数据库
 - `DATABASE_URL=sqlite+aiosqlite:////data/app.db`

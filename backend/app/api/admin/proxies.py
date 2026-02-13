@@ -14,6 +14,9 @@ from app.core.request_id import get_or_create_request_id
 from app.core.time import iso_utc_ms
 from app.db.models.jobs import JobRow
 from app.db.models.proxy_endpoints import ProxyEndpoint
+from app.db.models.proxy_pool_endpoints import ProxyPoolEndpoint
+from app.db.models.proxy_pools import ProxyPool
+from app.db.models.token_proxy_bindings import TokenProxyBinding
 from app.db.session import create_sessionmaker, with_sqlite_busy_retry
 from app.easy_proxies.client import EasyProxiesError, easy_proxies_auth, easy_proxies_export
 
@@ -55,6 +58,71 @@ async def list_proxy_endpoints(
             .all()
         )
 
+        endpoint_ids = [int(p.id) for p in endpoints]
+
+        pools_by_eid: dict[int, list[dict[str, Any]]] = {}
+        if endpoint_ids:
+            pool_rows = (
+                (
+                    await session.execute(
+                        sa.select(
+                            ProxyPoolEndpoint.endpoint_id,
+                            ProxyPoolEndpoint.pool_id,
+                            ProxyPoolEndpoint.enabled,
+                            ProxyPoolEndpoint.weight,
+                            ProxyPool.name,
+                            ProxyPool.enabled,
+                        )
+                        .join(ProxyPool, ProxyPool.id == ProxyPoolEndpoint.pool_id)
+                        .where(ProxyPoolEndpoint.endpoint_id.in_(endpoint_ids))
+                        .order_by(ProxyPoolEndpoint.pool_id.asc())
+                    )
+                )
+                .all()
+            )
+            for endpoint_id, pool_id, member_enabled, weight, pool_name, pool_enabled in pool_rows:
+                pools_by_eid.setdefault(int(endpoint_id), []).append(
+                    {
+                        "id": str(pool_id),
+                        "name": str(pool_name),
+                        "pool_enabled": bool(pool_enabled),
+                        "member_enabled": bool(member_enabled),
+                        "weight": int(weight or 0),
+                    }
+                )
+
+        primary_counts: dict[int, int] = {}
+        override_counts: dict[int, int] = {}
+        if endpoint_ids:
+            rows = (
+                (
+                    await session.execute(
+                        sa.select(TokenProxyBinding.primary_proxy_id, sa.func.count())
+                        .where(TokenProxyBinding.primary_proxy_id.in_(endpoint_ids))
+                        .group_by(TokenProxyBinding.primary_proxy_id)
+                    )
+                )
+                .all()
+            )
+            for pid, c in rows:
+                primary_counts[int(pid)] = int(c)
+
+            rows2 = (
+                (
+                    await session.execute(
+                        sa.select(TokenProxyBinding.override_proxy_id, sa.func.count())
+                        .where(TokenProxyBinding.override_proxy_id.is_not(None))
+                        .where(TokenProxyBinding.override_proxy_id.in_(endpoint_ids))
+                        .group_by(TokenProxyBinding.override_proxy_id)
+                    )
+                )
+                .all()
+            )
+            for pid, c in rows2:
+                if pid is None:
+                    continue
+                override_counts[int(pid)] = int(c)
+
     items = [
         {
             "id": str(p.id),
@@ -78,6 +146,15 @@ async def list_proxy_endpoints(
             ),
             "blacklisted_until": p.blacklisted_until,
             "last_error": p.last_error,
+            "success_count": int(p.success_count or 0),
+            "failure_count": int(p.failure_count or 0),
+            "last_ok_at": p.last_ok_at,
+            "last_fail_at": p.last_fail_at,
+            "pools": pools_by_eid.get(int(p.id), []),
+            "bindings": {
+                "primary_count": int(primary_counts.get(int(p.id), 0)),
+                "override_count": int(override_counts.get(int(p.id), 0)),
+            },
         }
         for p in endpoints
     ]

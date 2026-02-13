@@ -165,6 +165,74 @@ ORDER BY pe.id ASC;
     return await with_sqlite_busy_retry(_op)
 
 
+async def _load_token_binding(
+    engine: AsyncEngine,
+    *,
+    token_id: int,
+    pool_id: int,
+) -> tuple[int, int | None, str | None] | None:
+    sql = """
+SELECT primary_proxy_id, override_proxy_id, override_expires_at
+FROM token_proxy_bindings
+WHERE token_id=:token_id AND pool_id=:pool_id
+LIMIT 1;
+""".strip()
+
+    async def _op() -> tuple[int, int | None, str | None] | None:
+        async with engine.connect() as conn:
+            result = await conn.exec_driver_sql(sql, {"token_id": int(token_id), "pool_id": int(pool_id)})
+            row = result.first()
+            if row is None:
+                return None
+            primary_id = int(row[0])
+            override_id = int(row[1]) if row[1] is not None else None
+            override_expires_at = str(row[2]) if row[2] is not None else None
+            return primary_id, override_id, override_expires_at
+
+    return await with_sqlite_busy_retry(_op)
+
+
+async def _load_endpoint_in_pool(
+    engine: AsyncEngine,
+    *,
+    pool_id: int,
+    endpoint_id: int,
+    now_iso: str,
+) -> tuple[int, str, str, int, str, str] | None:
+    sql = """
+SELECT pe.id, pe.scheme, pe.host, pe.port, pe.username, pe.password_enc
+FROM proxy_pools pp
+JOIN proxy_pool_endpoints ppe
+  ON ppe.pool_id = pp.id AND ppe.enabled = 1
+JOIN proxy_endpoints pe
+  ON pe.id = ppe.endpoint_id AND pe.enabled = 1
+WHERE pp.id = :pool_id AND pp.enabled = 1
+  AND pe.id = :endpoint_id
+  AND (pe.blacklisted_until IS NULL OR pe.blacklisted_until <= :now)
+LIMIT 1;
+""".strip()
+
+    async def _op() -> tuple[int, str, str, int, str, str] | None:
+        async with engine.connect() as conn:
+            result = await conn.exec_driver_sql(
+                sql,
+                {"pool_id": int(pool_id), "endpoint_id": int(endpoint_id), "now": now_iso},
+            )
+            row = result.first()
+            if row is None:
+                return None
+            return (
+                int(row[0]),
+                str(row[1]),
+                str(row[2]),
+                int(row[3]),
+                str(row[4] or ""),
+                str(row[5] or ""),
+            )
+
+    return await with_sqlite_busy_retry(_op)
+
+
 def _build_proxy_uri(
     encryptor: FieldEncryptor | None,
     *,
@@ -200,6 +268,41 @@ def _build_proxy_uri(
     return f"{scheme}://{auth}{host_part}:{int(port)}"
 
 
+def _proxy_uri_from_endpoint_row(
+    settings: Settings,
+    *,
+    endpoint_id: int,
+    pool_id: int,
+    scheme: str,
+    host: str,
+    port: int,
+    username: str,
+    password_enc: str,
+) -> ProxyUri:
+    encryptor = None
+    if str(password_enc or "").strip():
+        try:
+            encryptor = FieldEncryptor.from_key(settings.field_encryption_key)
+        except Exception as exc:
+            raise ApiError(code=ErrorCode.INTERNAL_ERROR, message="Encryption not configured", status_code=500) from exc
+
+    try:
+        uri = _build_proxy_uri(
+            encryptor,
+            scheme=scheme,
+            host=host,
+            port=int(port),
+            username=username,
+            password_enc=password_enc,
+        )
+    except ApiError:
+        raise
+    except Exception as exc:
+        raise ApiError(code=ErrorCode.INTERNAL_ERROR, message="Invalid proxy endpoint", status_code=500) from exc
+
+    return ProxyUri(uri=uri, endpoint_id=int(endpoint_id), pool_id=int(pool_id))
+
+
 async def select_proxy_uri_for_url(
     engine: AsyncEngine,
     settings: Settings,
@@ -207,6 +310,7 @@ async def select_proxy_uri_for_url(
     *,
     url: str,
     now_iso: str | None = None,
+    token_id: int | None = None,
 ) -> ProxyUri | None:
     host = host_from_url(url)
     if host is None:
@@ -226,6 +330,43 @@ async def select_proxy_uri_for_url(
 
     now_iso = now_iso or iso_utc_ms()
 
+    if token_id is not None and int(token_id) > 0:
+        binding = await _load_token_binding(engine, token_id=int(token_id), pool_id=int(pool_id))
+        if binding is not None:
+            primary_proxy_id, override_proxy_id, override_expires_at = binding
+            override_active = bool(
+                override_proxy_id is not None
+                and override_expires_at
+                and str(override_expires_at) > str(now_iso)
+            )
+
+            candidates: list[int] = []
+            if override_active and override_proxy_id is not None:
+                candidates.append(int(override_proxy_id))
+            candidates.append(int(primary_proxy_id))
+
+            for endpoint_id in candidates:
+                picked_by_binding = await _load_endpoint_in_pool(
+                    engine,
+                    pool_id=int(pool_id),
+                    endpoint_id=int(endpoint_id),
+                    now_iso=str(now_iso),
+                )
+                if picked_by_binding is None:
+                    continue
+
+                eid, scheme, host_v, port, username, password_enc = picked_by_binding
+                return _proxy_uri_from_endpoint_row(
+                    settings,
+                    endpoint_id=int(eid),
+                    pool_id=int(pool_id),
+                    scheme=scheme,
+                    host=host_v,
+                    port=int(port),
+                    username=username,
+                    password_enc=password_enc,
+                )
+
     picked = await _pick_endpoint_in_pool(engine, pool_id=int(pool_id), now_iso=now_iso)
     if picked is None:
         if bool(runtime.proxy_fail_closed):
@@ -233,25 +374,13 @@ async def select_proxy_uri_for_url(
         return None
 
     endpoint_id, scheme, host_v, port, username, password_enc = picked
-    encryptor = None
-    if password_enc:
-        try:
-            encryptor = FieldEncryptor.from_key(settings.field_encryption_key)
-        except Exception as exc:
-            raise ApiError(code=ErrorCode.INTERNAL_ERROR, message="Encryption not configured", status_code=500) from exc
-
-    try:
-        uri = _build_proxy_uri(
-            encryptor,
-            scheme=scheme,
-            host=host_v,
-            port=int(port),
-            username=username,
-            password_enc=password_enc,
-        )
-    except ApiError:
-        raise
-    except Exception as exc:
-        raise ApiError(code=ErrorCode.INTERNAL_ERROR, message="Invalid proxy endpoint", status_code=500) from exc
-
-    return ProxyUri(uri=uri, endpoint_id=int(endpoint_id), pool_id=int(pool_id))
+    return _proxy_uri_from_endpoint_row(
+        settings,
+        endpoint_id=int(endpoint_id),
+        pool_id=int(pool_id),
+        scheme=scheme,
+        host=host_v,
+        port=int(port),
+        username=username,
+        password_enc=password_enc,
+    )

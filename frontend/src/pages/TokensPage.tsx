@@ -40,6 +40,7 @@ type TestRefreshResponse = {
   ok: true;
   expires_in: number;
   user_id: string | null;
+  proxy: { endpoint_id: string; pool_id: string } | null;
   request_id: string;
 };
 
@@ -153,7 +154,8 @@ export function TokensPage() {
       setActionErrorRequestId(null);
     },
     onSuccess: (data) => {
-      setActionMessage(`Token refresh OK (expires_in=${data.expires_in})`);
+      const via = data.proxy ? ` via proxy #${data.proxy.endpoint_id} (pool #${data.proxy.pool_id})` : " (direct)";
+      setActionMessage(`Token refresh OK (expires_in=${data.expires_in})${via}`);
       setActionRequestId(data.request_id);
       qc.invalidateQueries({ queryKey: ["admin", "tokens"] });
     },

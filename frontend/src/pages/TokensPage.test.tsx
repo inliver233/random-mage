@@ -56,10 +56,19 @@ describe("TokensPage", () => {
         }
         if (url.endsWith("/admin/api/tokens/1/test-refresh")) {
           expect(init?.method).toBe("POST");
-          return new Response(JSON.stringify({ ok: true, expires_in: 123, user_id: "u1", request_id: "req_test_refresh" }), {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          });
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              expires_in: 123,
+              user_id: "u1",
+              proxy: { endpoint_id: "10", pool_id: "1" },
+              request_id: "req_test_refresh",
+            }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            },
+          );
         }
         if (url.endsWith("/admin/api/tokens/1/reset-failures")) {
           expect(init?.method).toBe("POST");
@@ -120,6 +129,7 @@ describe("TokensPage", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: /测试刷新/ }));
     expect(await screen.findByText(/Token refresh OK/)).toBeInTheDocument();
+    expect(await screen.findByText(/via proxy #10/)).toBeInTheDocument();
     expect(await screen.findByText(/request_id:\s*req_test_refresh/)).toBeInTheDocument();
 
     fireEvent.click(await screen.findByRole("button", { name: /重置失败退避/ }));

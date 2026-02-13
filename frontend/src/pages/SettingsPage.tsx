@@ -21,6 +21,7 @@ type SettingsFormValues = {
   proxy_fail_closed: boolean;
   proxy_route_mode: "pixiv_only" | "all" | "allowlist" | "off";
   proxy_allowlist_domains: string[];
+  proxy_default_pool_id: number;
   random_default_attempts: number;
   random_default_r18_strict: boolean;
   random_fail_cooldown_ms: number;
@@ -99,6 +100,7 @@ export function SettingsPage() {
       proxy_fail_closed: asBool(proxy.fail_closed, false),
       proxy_route_mode: route_mode,
       proxy_allowlist_domains: asStrList(proxy.allowlist_domains),
+      proxy_default_pool_id: asInt(proxy.default_pool_id, 0),
       random_default_attempts: asInt(random.default_attempts, 3),
       random_default_r18_strict: asBool(random.default_r18_strict, true),
       random_fail_cooldown_ms: asInt(random.fail_cooldown_ms, 600_000),
@@ -117,6 +119,7 @@ export function SettingsPage() {
               fail_closed: values.proxy_fail_closed,
               route_mode: values.proxy_route_mode,
               allowlist_domains: values.proxy_allowlist_domains,
+              default_pool_id: values.proxy_default_pool_id > 0 ? values.proxy_default_pool_id : "",
             },
             random: {
               default_attempts: values.random_default_attempts,
@@ -205,6 +208,9 @@ export function SettingsPage() {
             </Form.Item>
             <Form.Item label="Allowlist domains" name="proxy_allowlist_domains">
               <Select mode="tags" style={{ maxWidth: 520 }} tokenSeparators={[",", "\n", " "]} placeholder="example.com api.example.com" />
+            </Form.Item>
+            <Form.Item label="Default pool id (0 = none)" name="proxy_default_pool_id">
+              <InputNumber min={0} max={1_000_000} style={{ width: 240 }} />
             </Form.Item>
 
             <Typography.Title level={5} style={{ marginTop: 12 }}>
