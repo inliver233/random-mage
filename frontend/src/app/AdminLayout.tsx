@@ -22,6 +22,9 @@ export function AdminLayout() {
           <Button size="small" onClick={() => navigate("/admin/hydration")}>
             补全管理
           </Button>
+          <Button size="small" onClick={() => navigate("/admin/proxy-pools")}>
+            代理池
+          </Button>
           <Typography.Title
             level={4}
             style={{ margin: 0, lineHeight: "64px", cursor: "pointer" }}
@@ -37,4 +40,3 @@ export function AdminLayout() {
     </Layout>
   );
 }
-

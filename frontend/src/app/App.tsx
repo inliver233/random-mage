@@ -15,6 +15,7 @@ import { TagsPage } from "../pages/TagsPage";
 import { AuthorsPage } from "../pages/AuthorsPage";
 import { TokensPage } from "../pages/TokensPage";
 import { ProxiesPage } from "../pages/ProxiesPage";
+import { ProxyPoolsPage } from "../pages/ProxyPoolsPage";
 import { BindingsPage } from "../pages/BindingsPage";
 import { JobsPage } from "../pages/JobsPage";
 import { HydrationPage } from "../pages/HydrationPage";
@@ -82,6 +83,7 @@ export function App() {
             <Route path="authors" element={<AuthorsPage />} />
             <Route path="tokens" element={<TokensPage />} />
             <Route path="proxies" element={<ProxiesPage />} />
+            <Route path="proxy-pools" element={<ProxyPoolsPage />} />
             <Route path="bindings" element={<BindingsPage />} />
             <Route path="jobs" element={<JobsPage />} />
             <Route path="hydration" element={<HydrationPage />} />
