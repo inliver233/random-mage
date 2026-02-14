@@ -20,6 +20,57 @@ export class ApiError extends Error {
   }
 }
 
+function containsChinese(text: string): boolean {
+  return /[\u4e00-\u9fff]/.test(text);
+}
+
+function translateErrorCode(code: string): string | null {
+  switch (code) {
+    case "BAD_REQUEST":
+      return "请求参数错误";
+    case "UNAUTHORIZED":
+      return "未登录或登录已失效";
+    case "FORBIDDEN":
+      return "无权限";
+    case "NOT_FOUND":
+      return "资源不存在";
+    case "RATE_LIMITED":
+      return "请求过于频繁，请稍后再试";
+    case "INTERNAL_ERROR":
+      return "服务器内部错误";
+    case "NO_MATCH":
+      return "没有匹配的图片";
+    case "UPSTREAM_STREAM_ERROR":
+      return "上游图片流错误";
+    case "UPSTREAM_403":
+      return "上游拒绝访问（403）";
+    case "UPSTREAM_404":
+      return "上游资源不存在（404）";
+    case "UPSTREAM_RATE_LIMIT":
+      return "上游限流，请稍后再试";
+    case "INVALID_UPLOAD_TYPE":
+      return "不支持的上传类型";
+    case "PAYLOAD_TOO_LARGE":
+      return "上传内容过大";
+    case "UNSUPPORTED_URL":
+      return "不支持的 URL";
+    case "TOKEN_REFRESH_FAILED":
+      return "令牌刷新失败";
+    case "TOKEN_BACKOFF":
+      return "令牌退避中，请稍后再试";
+    case "NO_TOKEN_AVAILABLE":
+      return "没有可用令牌";
+    case "PROXY_REQUIRED":
+      return "必须启用代理";
+    case "PROXY_AUTH_FAILED":
+      return "代理认证失败";
+    case "PROXY_CONNECT_FAILED":
+      return "代理连接失败";
+    default:
+      return null;
+  }
+}
+
 function getApiBaseUrl(): string {
   const raw = (import.meta.env.VITE_API_BASE_URL || "").trim();
   return raw.endsWith("/") ? raw.slice(0, -1) : raw;
@@ -84,9 +135,11 @@ export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
       // ignore
     }
   }
-  const msg =
-    body && typeof body.message === "string" && body.message.trim()
-      ? body.message
-      : `HTTP ${resp.status}`;
+
+  const bodyCode = body && typeof body.code === "string" ? String(body.code).trim() : "";
+  const rawMessage = body && typeof body.message === "string" ? body.message.trim() : "";
+  const translated = bodyCode ? translateErrorCode(bodyCode) : null;
+
+  const msg = translated ? (rawMessage && containsChinese(rawMessage) ? rawMessage : translated) : rawMessage || `HTTP ${resp.status}`;
   throw new ApiError(msg, { status: resp.status, body });
 }

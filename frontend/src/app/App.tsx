@@ -1,4 +1,5 @@
 import { ConfigProvider } from "antd";
+import zhCN from "antd/locale/zh_CN";
 import React, { useEffect } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 
@@ -58,7 +59,7 @@ function UnauthorizedListener() {
 
 export function App() {
   return (
-    <ConfigProvider>
+    <ConfigProvider locale={zhCN}>
       <BrowserRouter>
         <UnauthorizedListener />
         <Routes>
