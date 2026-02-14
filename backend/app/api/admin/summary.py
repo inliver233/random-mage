@@ -47,6 +47,49 @@ async def get_summary(
                 (await conn.exec_driver_sql("SELECT COUNT(*) FROM images WHERE status=1;")).scalar_one()
             )
 
+            missing_tags = int(
+                (
+                    await conn.exec_driver_sql(
+                        """
+SELECT COUNT(*)
+FROM images
+WHERE status=1
+  AND id NOT IN (SELECT DISTINCT image_id FROM image_tags);
+""".strip()
+                    )
+                ).scalar_one()
+            )
+            missing_geometry = int(
+                (
+                    await conn.exec_driver_sql(
+                        "SELECT COUNT(*) FROM images WHERE status=1 AND (width IS NULL OR height IS NULL);"
+                    )
+                ).scalar_one()
+            )
+            missing_r18 = int(
+                (await conn.exec_driver_sql("SELECT COUNT(*) FROM images WHERE status=1 AND x_restrict IS NULL;")).scalar_one()
+            )
+            missing_ai = int(
+                (await conn.exec_driver_sql("SELECT COUNT(*) FROM images WHERE status=1 AND ai_type IS NULL;")).scalar_one()
+            )
+            missing_user = int(
+                (await conn.exec_driver_sql("SELECT COUNT(*) FROM images WHERE status=1 AND user_id IS NULL;")).scalar_one()
+            )
+            missing_title = int(
+                (
+                    await conn.exec_driver_sql(
+                        "SELECT COUNT(*) FROM images WHERE status=1 AND (title IS NULL OR TRIM(title)='');"
+                    )
+                ).scalar_one()
+            )
+            missing_created_at = int(
+                (
+                    await conn.exec_driver_sql(
+                        "SELECT COUNT(*) FROM images WHERE status=1 AND (created_at_pixiv IS NULL OR TRIM(created_at_pixiv)='');"
+                    )
+                ).scalar_one()
+            )
+
             tokens_total = int((await conn.exec_driver_sql("SELECT COUNT(*) FROM pixiv_tokens;")).scalar_one())
             tokens_enabled = int(
                 (await conn.exec_driver_sql("SELECT COUNT(*) FROM pixiv_tokens WHERE enabled=1;")).scalar_one()
@@ -76,6 +119,18 @@ async def get_summary(
 
         return {
             "images": {"total": images_total, "enabled": images_enabled},
+            "hydration": {
+                "enabled_images_total": images_enabled,
+                "missing": {
+                    "tags": missing_tags,
+                    "geometry": missing_geometry,
+                    "r18": missing_r18,
+                    "ai": missing_ai,
+                    "user": missing_user,
+                    "title": missing_title,
+                    "created_at": missing_created_at,
+                },
+            },
             "tokens": {"total": tokens_total, "enabled": tokens_enabled},
             "proxies": {"endpoints_total": proxies_total, "endpoints_enabled": proxies_enabled},
             "proxy_pools": {"total": pools_total, "enabled": pools_enabled},
@@ -86,4 +141,3 @@ async def get_summary(
 
     counts = await with_sqlite_busy_retry(_op)
     return {"ok": True, "counts": counts, "request_id": rid}
-

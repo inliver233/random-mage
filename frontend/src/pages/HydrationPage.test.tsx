@@ -25,6 +25,10 @@ describe("HydrationPage", () => {
           JSON.stringify({
             ok: true,
             counts: {
+              hydration: {
+                enabled_images_total: 10,
+                missing: { tags: 7, geometry: 5, r18: 10, ai: 3, user: 2, title: 1, created_at: 4 },
+              },
               jobs: { counts: { pending: 2, running: 1, failed: 0 } },
               worker: { last_seen_at: "2026-02-14T00:00:00Z" },
             },
@@ -118,6 +122,8 @@ describe("HydrationPage", () => {
 
     expect(await screen.findByText("元数据补全管理")).toBeInTheDocument();
     expect(await screen.findByText("工作线程心跳: 2026-02-14T00:00:00Z")).toBeInTheDocument();
+    expect(await screen.findByText("元数据覆盖率统计")).toBeInTheDocument();
+    expect(await screen.findByText("标签（缺 7）")).toBeInTheDocument();
     expect(await screen.findByText("#88 等待中 0/3")).toBeInTheDocument();
     expect(await screen.findByText(/请求ID:\s*req_runs/)).toBeInTheDocument();
   });

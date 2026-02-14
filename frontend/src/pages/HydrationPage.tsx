@@ -24,6 +24,10 @@ import { ApiError, apiJson } from "../api/client";
 type SummaryResponse = {
   ok: true;
   counts: {
+    hydration?: {
+      enabled_images_total: number;
+      missing: Record<string, number>;
+    };
     jobs: { counts: Record<string, number> };
     worker: { last_seen_at: string | null };
   };
@@ -190,6 +194,18 @@ export function HydrationPage() {
     queryKey: ["admin", "summary"],
     queryFn: () => apiJson<SummaryResponse>("/admin/api/summary"),
   });
+
+  const hydrationStats = summary.data?.counts.hydration;
+  const enabledImagesTotal = hydrationStats?.enabled_images_total ?? 0;
+  const missingCounts = hydrationStats?.missing ?? {};
+
+  const missingOptionsWithCounts = useMemo(() => {
+    return MISSING_OPTIONS.map((opt) => {
+      const missing = Number(missingCounts[opt.value] ?? 0);
+      const label = enabledImagesTotal > 0 ? `${opt.label}（缺 ${missing}）` : opt.label;
+      return { label, value: opt.value };
+    });
+  }, [enabledImagesTotal, missingCounts]);
 
   const runs = useQuery({
     queryKey: ["admin", "hydration-runs", { statusFilter }],
@@ -402,7 +418,7 @@ export function HydrationPage() {
               onFinish={(values) => createBackfill.mutate(values)}
             >
               <Form.Item label="补全字段" name="missing">
-                <Checkbox.Group options={MISSING_OPTIONS} />
+                <Checkbox.Group options={missingOptionsWithCounts} />
               </Form.Item>
               <Space wrap>
                 <Button type="primary" htmlType="submit" loading={createBackfill.isPending}>
@@ -499,6 +515,39 @@ export function HydrationPage() {
         </Col>
       </Row>
 
+      <Card title="元数据覆盖率统计">
+        {summary.isLoading ? (
+          <Skeleton active />
+        ) : summary.isError ? (
+          <Alert
+            type="error"
+            showIcon
+            message="加载覆盖率统计失败"
+            description={requestIdFromError(summary.error) ? `请求ID: ${requestIdFromError(summary.error)}` : ""}
+          />
+        ) : enabledImagesTotal <= 0 ? (
+          <Alert type="info" showIcon message="暂无可用图片" description="请先导入图片链接后再查看覆盖率统计。" />
+        ) : (
+          <Table
+            size="small"
+            pagination={false}
+            rowKey={(row) => row.key}
+            columns={[
+              { title: "字段", dataIndex: "label", key: "label" },
+              { title: "缺失", dataIndex: "missing", key: "missing", width: 120 },
+              { title: "已具备", dataIndex: "present", key: "present", width: 120 },
+              { title: "覆盖率", dataIndex: "coverage", key: "coverage", width: 120 },
+            ]}
+            dataSource={MISSING_OPTIONS.map((opt) => {
+              const missing = Number(missingCounts[opt.value] ?? 0);
+              const present = Math.max(0, enabledImagesTotal - missing);
+              const coverage = enabledImagesTotal > 0 ? `${Math.round((present / enabledImagesTotal) * 100)}%` : "0%";
+              return { key: opt.value, label: opt.label, missing, present, coverage };
+            })}
+          />
+        )}
+      </Card>
+
       {runAction.isError ? (
         <Alert
           type="error"
@@ -563,4 +612,3 @@ export function HydrationPage() {
     </Space>
   );
 }
-
