@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import sqlalchemy as sa
@@ -90,6 +91,58 @@ async def list_jobs(
         "ok": True,
         "items": items,
         "next_cursor": str(next_cursor) if next_cursor is not None else "",
+        "request_id": rid,
+    }
+
+
+@router.get("/jobs/{job_id}")
+async def get_job(
+    job_id: int,
+    request: Request,
+    _claims: dict[str, Any] = Depends(get_admin_claims),
+) -> dict[str, Any]:
+    _ = _claims
+    if job_id <= 0:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid job id", status_code=400)
+
+    rid = get_or_create_request_id(request)
+
+    engine = request.app.state.engine
+    Session = create_sessionmaker(engine)
+
+    async with Session() as session:
+        row = await session.get(JobRow, job_id)
+        if row is None:
+            raise ApiError(code=ErrorCode.NOT_FOUND, message="Job not found", status_code=404)
+
+    payload_json = str(row.payload_json or "")
+    payload: Any = None
+    if payload_json.strip():
+        try:
+            payload = json.loads(payload_json)
+        except Exception:
+            payload = None
+
+    return {
+        "ok": True,
+        "item": {
+            "id": str(row.id),
+            "type": row.type,
+            "status": row.status,
+            "priority": int(row.priority),
+            "run_after": row.run_after,
+            "attempt": int(row.attempt),
+            "max_attempts": int(row.max_attempts),
+            "payload": payload,
+            "payload_json": payload_json,
+            "last_error": row.last_error,
+            "locked_by": row.locked_by,
+            "locked_at": row.locked_at,
+            "ref_type": row.ref_type,
+            "ref_id": row.ref_id,
+            "created_at": row.created_at,
+            "updated_at": row.updated_at,
+        },
         "request_id": rid,
     }
 

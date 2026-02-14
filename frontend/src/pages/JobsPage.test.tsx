@@ -15,7 +15,7 @@ describe("JobsPage", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
-        if (url.endsWith("/admin/api/jobs?status=failed&limit=20")) {
+        if (url.endsWith("/admin/api/jobs?limit=50&status=failed")) {
           return new Response(
             JSON.stringify({
               ok: true,
@@ -24,11 +24,16 @@ describe("JobsPage", () => {
                   id: "j1",
                   type: "proxy_probe",
                   status: "failed",
+                  priority: 0,
+                  last_error: "forbidden",
+                  locked_by: null,
+                  locked_at: null,
+                  ref_type: null,
+                  ref_id: null,
+                  created_at: "2026-02-11T00:00:00Z",
                   attempt: 1,
                   max_attempts: 3,
                   run_after: null,
-                  last_error_code: "UPSTREAM_403",
-                  last_error_message: "forbidden",
                   updated_at: "2026-02-11T00:00:00Z",
                 },
               ],
