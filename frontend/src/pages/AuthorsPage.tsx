@@ -24,13 +24,13 @@ function requestIdFromError(err: unknown): string | null {
 }
 
 const columns: ColumnsType<AuthorItem> = [
-  { title: "User ID", dataIndex: "user_id", key: "user_id" },
-  { title: "Name", dataIndex: "user_name", key: "user_name" },
-  { title: "Count", dataIndex: "count_images", key: "count_images" },
+  { title: "作者ID", dataIndex: "user_id", key: "user_id" },
+  { title: "作者名", dataIndex: "user_name", key: "user_name" },
+  { title: "图片数量", dataIndex: "count_images", key: "count_images" },
 ];
 
 export function AuthorsPage() {
-  const q = useQuery({
+  const query = useQuery({
     queryKey: ["public", "authors", { limit: 50 }],
     queryFn: () => apiJson<AuthorsListResponse>("/authors?limit=50"),
   });
@@ -38,29 +38,29 @@ export function AuthorsPage() {
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
       <Typography.Title level={3} style={{ margin: 0 }}>
-        Authors
+        作者列表
       </Typography.Title>
 
-      {q.isLoading ? (
+      {query.isLoading ? (
         <Skeleton active />
-      ) : q.isError ? (
+      ) : query.isError ? (
         <Alert
           type="error"
           showIcon
-          message="Failed to load authors"
-          description={requestIdFromError(q.error) ? `request_id: ${requestIdFromError(q.error)}` : ""}
+          message="加载作者列表失败"
+          description={requestIdFromError(query.error) ? `请求ID: ${requestIdFromError(query.error)}` : ""}
         />
-      ) : !q.data ? (
+      ) : !query.data ? (
         <Skeleton active />
-      ) : q.data.items.length === 0 ? (
-        <Alert type="info" showIcon message="No authors" description="Import images to populate authors." />
+      ) : query.data.items.length === 0 ? (
+        <Alert type="info" showIcon message="暂无作者数据" description="请先导入图片并执行补全。" />
       ) : (
         <Card>
-          <Typography.Text type="secondary">request_id: {q.data.request_id}</Typography.Text>
+          <Typography.Text type="secondary">请求ID: {query.data.request_id}</Typography.Text>
           <Table<AuthorItem>
-            rowKey={(r) => r.user_id}
+            rowKey={(row) => row.user_id}
             columns={columns}
-            dataSource={q.data.items}
+            dataSource={query.data.items}
             pagination={false}
             size="small"
             style={{ marginTop: 12 }}

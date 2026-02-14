@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+﻿import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -51,7 +51,6 @@ describe("ProxiesPage", () => {
         if (url.endsWith("/admin/api/proxies/endpoints/import")) {
           expect(init?.method).toBe("POST");
           const body = init?.body ? JSON.parse(String(init.body)) : {};
-          expect(body.source).toBe("manual");
           expect(body.conflict_policy).toBe("overwrite");
           expect(String(body.text || "")).toContain("http://u:pa@ss@1.2.3.4:8080");
           expect(String(body.text || "")).toContain("socks5://5.6.7.8:1080");
@@ -94,12 +93,12 @@ describe("ProxiesPage", () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText("Proxies")).toBeInTheDocument();
+    expect(await screen.findByText("代理管理")).toBeInTheDocument();
     expect(await screen.findByText("http://***:***@1.2.3.4:8080")).toBeInTheDocument();
-    expect(await screen.findByText(/request_id:\s*req_proxies_1/)).toBeInTheDocument();
+    expect(await screen.findByText(/请求ID:\s*req_proxies_1/)).toBeInTheDocument();
   });
 
-  it("imports from easy_proxies", async () => {
+  it("imports from easy-proxies", async () => {
     const qc = makeClient();
     render(
       <QueryClientProvider client={qc}>
@@ -107,13 +106,13 @@ describe("ProxiesPage", () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText("Proxies")).toBeInTheDocument();
+    expect(await screen.findByText("代理管理")).toBeInTheDocument();
     fireEvent.change(screen.getByPlaceholderText("http://easy-proxies:9090"), { target: { value: "http://easy.test" } });
-    fireEvent.change(screen.getByPlaceholderText("required"), { target: { value: "pw_test" } });
-    fireEvent.click(screen.getByRole("button", { name: /从\s*easy_proxies\s*导入/ }));
+    fireEvent.change(screen.getByPlaceholderText("必填"), { target: { value: "pw_test" } });
+    fireEvent.click(screen.getByRole("button", { name: "开始导入" }));
 
-    expect(await screen.findByText("easy_proxies imported")).toBeInTheDocument();
-    expect(await screen.findByText(/request_id:\s*req_easy/)).toBeInTheDocument();
+    expect(await screen.findByText("外部代理服务导入完成")).toBeInTheDocument();
+    expect(await screen.findByText(/请求ID:\s*req_easy/)).toBeInTheDocument();
   });
 
   it("imports manual endpoints", async () => {
@@ -124,14 +123,17 @@ describe("ProxiesPage", () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText("Proxies")).toBeInTheDocument();
+    expect(await screen.findByText("代理管理")).toBeInTheDocument();
     fireEvent.change(screen.getByPlaceholderText("http://user:pass@1.2.3.4:8080"), {
       target: { value: "http://u:pa@ss@1.2.3.4:8080\nsocks5://5.6.7.8:1080\n" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /^导\s*入$/ }));
 
-    expect(await screen.findByText("Imported")).toBeInTheDocument();
-    expect(await screen.findByText(/request_id:\s*req_manual/)).toBeInTheDocument();
+    const form = document.querySelector("form");
+    expect(form).not.toBeNull();
+    fireEvent.submit(form as HTMLFormElement);
+
+    expect(await screen.findByText("手动导入完成")).toBeInTheDocument();
+    expect(await screen.findByText(/请求ID:\s*req_manual/)).toBeInTheDocument();
   });
 
   it("enqueues proxy probe job", async () => {
@@ -142,11 +144,11 @@ describe("ProxiesPage", () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText("Proxies")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /探测健康/ }));
+    expect(await screen.findByText("代理管理")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "启动健康探测任务" }));
 
-    expect(await screen.findByText("probe enqueued")).toBeInTheDocument();
-    expect(await screen.findByText(/job_id:\s*job_1/)).toBeInTheDocument();
-    expect(await screen.findByText(/request_id:\s*req_probe/)).toBeInTheDocument();
+    expect(await screen.findByText("探测任务已入队")).toBeInTheDocument();
+    expect(await screen.findByText(/任务ID:\s*job_1/)).toBeInTheDocument();
+    expect(await screen.findByText(/请求ID:\s*req_probe/)).toBeInTheDocument();
   });
 });

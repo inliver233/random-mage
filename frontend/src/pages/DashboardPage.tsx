@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+﻿import { useMutation, useQuery } from "@tanstack/react-query";
 import { Alert, Button, Card, Col, Row, Skeleton, Space, Typography } from "antd";
 import React from "react";
 import { useNavigate } from "react-router-dom";
@@ -52,7 +52,7 @@ function requestIdFromError(err: unknown): string | null {
 function messageFromError(err: unknown): string {
   if (err instanceof ApiError) return err.message;
   if (err instanceof Error) return err.message;
-  return "Unknown error";
+  return "未知错误";
 }
 
 export function DashboardPage() {
@@ -96,9 +96,9 @@ export function DashboardPage() {
   const bindingCount = counts?.bindings.total ?? 0;
 
   const jobsCounts = counts?.jobs.counts ?? {};
-  const pendingJobs = jobsCounts["pending"] ?? 0;
-  const runningJobs = jobsCounts["running"] ?? 0;
-  const failedJobsTotal = jobsCounts["failed"] ?? 0;
+  const pendingJobs = jobsCounts.pending ?? 0;
+  const runningJobs = jobsCounts.running ?? 0;
+  const failedJobsTotal = jobsCounts.failed ?? 0;
   const workerLastSeenAt = counts?.worker.last_seen_at ?? null;
 
   const failedJobCount = failedJobs.data?.items.length ?? 0;
@@ -107,11 +107,12 @@ export function DashboardPage() {
     <>
       <Space wrap style={{ marginBottom: 16 }}>
         <Button type="primary" onClick={() => navigate("/admin/import")}>
-          去导入
+          去导入链接
         </Button>
-        <Button onClick={() => navigate("/admin/tokens")}>去添加 Token</Button>
-        <Button onClick={() => navigate("/admin/proxies")}>去添加 代理</Button>
-        <Button onClick={() => navigate("/admin/random")}>打开 Playground</Button>
+        <Button onClick={() => navigate("/admin/tokens")}>去添加令牌</Button>
+        <Button onClick={() => navigate("/admin/proxies")}>去添加代理</Button>
+        <Button onClick={() => navigate("/admin/hydration")}>打开补全管理</Button>
+        <Button onClick={() => navigate("/admin/random")}>打开随机测试</Button>
         <Button onClick={() => createHydration.mutate()} loading={createHydration.isPending}>
           创建补全任务
         </Button>
@@ -121,8 +122,8 @@ export function DashboardPage() {
         <Alert
           type="success"
           showIcon
-          message="Hydration run created"
-          description={`hydration_run_id: ${createHydration.data.hydration_run_id}, job_id: ${createHydration.data.job_id}, request_id: ${createHydration.data.request_id}`}
+          message="补全任务已创建"
+          description={`补全运行ID: ${createHydration.data.hydration_run_id}，任务ID: ${createHydration.data.job_id}，请求ID: ${createHydration.data.request_id}`}
           style={{ marginBottom: 16 }}
         />
       ) : null}
@@ -130,10 +131,10 @@ export function DashboardPage() {
         <Alert
           type="error"
           showIcon
-          message="Failed to create hydration run"
+          message="创建补全任务失败"
           description={
             requestIdFromError(createHydration.error)
-              ? `request_id: ${requestIdFromError(createHydration.error)} (${messageFromError(createHydration.error)})`
+              ? `请求ID: ${requestIdFromError(createHydration.error)}（${messageFromError(createHydration.error)}）`
               : messageFromError(createHydration.error)
           }
           style={{ marginBottom: 16 }}
@@ -142,44 +143,44 @@ export function DashboardPage() {
 
       <Row gutter={[16, 16]}>
         <Col xs={24} md={12} xl={6}>
-          <Card title="Worker / Queue">
+          <Card title="工作线程 / 队列">
             {summary.isLoading ? (
               <Skeleton active />
             ) : summary.isError ? (
               <Alert
                 type="error"
                 showIcon
-                message="Failed to load summary"
-                description={requestIdFromError(summary.error) ? `request_id: ${requestIdFromError(summary.error)}` : ""}
+                message="加载总览失败"
+                description={requestIdFromError(summary.error) ? `请求ID: ${requestIdFromError(summary.error)}` : ""}
               />
             ) : (
               <Space direction="vertical">
-                <Typography.Text>worker.last_seen_at: {workerLastSeenAt ? workerLastSeenAt : "(none)"}</Typography.Text>
-                <Typography.Text>jobs.pending: {pendingJobs}</Typography.Text>
-                <Typography.Text>jobs.running: {runningJobs}</Typography.Text>
-                <Typography.Text>jobs.failed: {failedJobsTotal}</Typography.Text>
+                <Typography.Text>工作线程心跳: {workerLastSeenAt || "（暂无）"}</Typography.Text>
+                <Typography.Text>等待任务: {pendingJobs}</Typography.Text>
+                <Typography.Text>运行任务: {runningJobs}</Typography.Text>
+                <Typography.Text>失败任务: {failedJobsTotal}</Typography.Text>
               </Space>
             )}
           </Card>
         </Col>
 
         <Col xs={24} md={12} xl={6}>
-          <Card title="Images">
+          <Card title="图片">
             {summary.isLoading ? (
               <Skeleton active />
             ) : summary.isError ? (
               <Alert
                 type="error"
                 showIcon
-                message="Failed to load summary"
-                description={requestIdFromError(summary.error) ? `request_id: ${requestIdFromError(summary.error)}` : ""}
+                message="加载总览失败"
+                description={requestIdFromError(summary.error) ? `请求ID: ${requestIdFromError(summary.error)}` : ""}
               />
             ) : (
               <Space direction="vertical">
-                <Typography.Text>total: {imageCount}</Typography.Text>
-                <Typography.Text>enabled: {imageEnabledCount}</Typography.Text>
+                <Typography.Text>总数: {imageCount}</Typography.Text>
+                <Typography.Text>启用: {imageEnabledCount}</Typography.Text>
                 <Button size="small" onClick={() => navigate("/admin/images")}>
-                  打开 Images
+                  打开图片列表
                 </Button>
               </Space>
             )}
@@ -187,22 +188,22 @@ export function DashboardPage() {
         </Col>
 
         <Col xs={24} md={12} xl={6}>
-          <Card title="Tokens">
+          <Card title="令牌">
             {summary.isLoading ? (
               <Skeleton active />
             ) : summary.isError ? (
               <Alert
                 type="error"
                 showIcon
-                message="Failed to load summary"
-                description={requestIdFromError(summary.error) ? `request_id: ${requestIdFromError(summary.error)}` : ""}
+                message="加载总览失败"
+                description={requestIdFromError(summary.error) ? `请求ID: ${requestIdFromError(summary.error)}` : ""}
               />
             ) : (
               <Space direction="vertical">
-                <Typography.Text>total: {tokenCount}</Typography.Text>
-                <Typography.Text>enabled: {tokenEnabledCount}</Typography.Text>
+                <Typography.Text>总数: {tokenCount}</Typography.Text>
+                <Typography.Text>启用: {tokenEnabledCount}</Typography.Text>
                 <Button size="small" onClick={() => navigate("/admin/tokens")}>
-                  打开 Tokens
+                  打开令牌列表
                 </Button>
               </Space>
             )}
@@ -210,32 +211,32 @@ export function DashboardPage() {
         </Col>
 
         <Col xs={24} md={12} xl={6}>
-          <Card title="Proxies">
+          <Card title="代理">
             {settings.isLoading || summary.isLoading ? (
               <Skeleton active />
             ) : settings.isError ? (
               <Alert
                 type="error"
                 showIcon
-                message="Failed to load settings"
-                description={requestIdFromError(settings.error) ? `request_id: ${requestIdFromError(settings.error)}` : ""}
+                message="加载设置失败"
+                description={requestIdFromError(settings.error) ? `请求ID: ${requestIdFromError(settings.error)}` : ""}
               />
             ) : summary.isError ? (
               <Alert
                 type="error"
                 showIcon
-                message="Failed to load summary"
-                description={requestIdFromError(summary.error) ? `request_id: ${requestIdFromError(summary.error)}` : ""}
+                message="加载总览失败"
+                description={requestIdFromError(summary.error) ? `请求ID: ${requestIdFromError(summary.error)}` : ""}
               />
             ) : (
               <Space direction="vertical">
-                <Typography.Text>proxy.enabled: {String(proxyEnabled)}</Typography.Text>
-                <Typography.Text>default_pool_id: {defaultPoolId || "(none)"}</Typography.Text>
-                <Typography.Text>endpoints: {proxyEnabledCount}/{proxyCount} enabled</Typography.Text>
-                <Typography.Text>pools: {proxyPoolEnabledCount}/{proxyPoolCount} enabled</Typography.Text>
-                <Typography.Text>bindings: {bindingCount}</Typography.Text>
+                <Typography.Text>代理总开关: {proxyEnabled ? "开启" : "关闭"}</Typography.Text>
+                <Typography.Text>默认代理池ID: {defaultPoolId || "（未设置）"}</Typography.Text>
+                <Typography.Text>代理节点: {proxyEnabledCount}/{proxyCount} 启用</Typography.Text>
+                <Typography.Text>代理池: {proxyPoolEnabledCount}/{proxyPoolCount} 启用</Typography.Text>
+                <Typography.Text>绑定关系: {bindingCount}</Typography.Text>
                 <Button size="small" onClick={() => navigate("/admin/proxies")}>
-                  打开 Proxies
+                  打开代理列表
                 </Button>
               </Space>
             )}
@@ -245,23 +246,21 @@ export function DashboardPage() {
 
       <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
         <Col span={24}>
-          <Card title="Failed Jobs (latest 10)">
+          <Card title="失败任务（最近10条）">
             {failedJobs.isLoading ? (
               <Skeleton active />
             ) : failedJobs.isError ? (
               <Alert
                 type="error"
                 showIcon
-                message="Failed to load jobs"
-                description={
-                  requestIdFromError(failedJobs.error) ? `request_id: ${requestIdFromError(failedJobs.error)}` : ""
-                }
+                message="加载任务失败"
+                description={requestIdFromError(failedJobs.error) ? `请求ID: ${requestIdFromError(failedJobs.error)}` : ""}
               />
             ) : (
               <Space direction="vertical">
-                <Typography.Text>count: {failedJobCount}</Typography.Text>
+                <Typography.Text>数量: {failedJobCount}</Typography.Text>
                 <Button size="small" onClick={() => navigate("/admin/jobs")}>
-                  打开 Jobs
+                  打开任务页
                 </Button>
               </Space>
             )}
@@ -271,3 +270,5 @@ export function DashboardPage() {
     </>
   );
 }
+
+

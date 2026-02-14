@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+﻿import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import React from "react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -39,14 +39,14 @@ describe("LoginPage", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "admin" } });
-    fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "pw" } });
+    fireEvent.change(screen.getByPlaceholderText("请输入用户名"), { target: { value: "admin" } });
+    fireEvent.change(screen.getByPlaceholderText("请输入密码"), { target: { value: "pw" } });
     fireEvent.click(screen.getByRole("button", { name: /登\s*录/ }));
 
     await waitFor(() => {
       expect(getAdminToken()).toBe("tok_admin");
     });
-    expect(await screen.findByText(/request_id:\s*req_login/)).toBeInTheDocument();
+    expect(await screen.findByText(/请求ID:\s*req_login/)).toBeInTheDocument();
     expect(screen.queryByText("tok_admin")).not.toBeInTheDocument();
   });
 
@@ -74,11 +74,13 @@ describe("LoginPage", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "admin" } });
-    fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "pw" } });
+    fireEvent.change(screen.getByPlaceholderText("请输入用户名"), { target: { value: "admin" } });
+    fireEvent.change(screen.getByPlaceholderText("请输入密码"), { target: { value: "pw" } });
     fireEvent.click(screen.getByRole("button", { name: /登\s*录/ }));
 
-    expect(await screen.findByText(/request_id:\s*req_bad/)).toBeInTheDocument();
+    expect(await screen.findByText(/请求ID:\s*req_bad/)).toBeInTheDocument();
     expect(getAdminToken()).toBeNull();
   });
 });
+
+

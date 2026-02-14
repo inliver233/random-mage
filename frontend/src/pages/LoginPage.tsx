@@ -45,7 +45,7 @@ export function LoginPage() {
       } else if (err instanceof Error) {
         setErrorMessage(err.message);
       } else {
-        setErrorMessage("Login failed");
+        setErrorMessage("登录失败");
       }
     } finally {
       setLoading(false);
@@ -65,32 +65,19 @@ export function LoginPage() {
       <Card style={{ width: 360 }}>
         <Space direction="vertical" size="middle" style={{ width: "100%" }}>
           <Typography.Title level={3} style={{ margin: 0 }}>
-            Admin Login
+            管理后台登录
           </Typography.Title>
 
-          {errorMessage ? (
-            <Alert type="error" message={errorMessage} showIcon />
-          ) : null}
-
-          {requestId ? (
-            <Typography.Text type="secondary">request_id: {requestId}</Typography.Text>
-          ) : null}
+          {errorMessage ? <Alert type="error" message={errorMessage} showIcon /> : null}
+          {requestId ? <Typography.Text type="secondary">请求ID: {requestId}</Typography.Text> : null}
 
           <Form<LoginFormValues> form={form} layout="vertical" onFinish={onFinish}>
-            <Form.Item
-              label="Username"
-              name="username"
-              rules={[{ required: true, message: "Username is required" }]}
-            >
-              <Input placeholder="Username" autoComplete="username" />
+            <Form.Item label="用户名" name="username" rules={[{ required: true, message: "请输入用户名" }]}>
+              <Input placeholder="请输入用户名" autoComplete="username" />
             </Form.Item>
 
-            <Form.Item
-              label="Password"
-              name="password"
-              rules={[{ required: true, message: "Password is required" }]}
-            >
-              <Input.Password placeholder="Password" autoComplete="current-password" />
+            <Form.Item label="密码" name="password" rules={[{ required: true, message: "请输入密码" }]}>
+              <Input.Password placeholder="请输入密码" autoComplete="current-password" />
             </Form.Item>
 
             <Button type="primary" htmlType="submit" block loading={loading}>
@@ -102,3 +89,4 @@ export function LoginPage() {
     </div>
   );
 }
+

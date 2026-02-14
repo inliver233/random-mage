@@ -58,7 +58,7 @@ function requestIdFromError(err: unknown): string | null {
 function messageFromError(err: unknown): string {
   if (err instanceof ApiError) return err.message;
   if (err instanceof Error) return err.message;
-  return "Unknown error";
+  return "未知错误";
 }
 
 const columns = (actions: {
@@ -67,32 +67,24 @@ const columns = (actions: {
   testPendingId: string | null;
   resetPendingId: string | null;
 }): ColumnsType<TokenItem> => [
-  { title: "Label", dataIndex: "label", key: "label" },
-  { title: "Enabled", dataIndex: "enabled", key: "enabled", render: (v) => String(Boolean(v)) },
-  { title: "Masked", dataIndex: "refresh_token_masked", key: "refresh_token_masked" },
-  { title: "Weight", dataIndex: "weight", key: "weight" },
-  { title: "Errors", dataIndex: "error_count", key: "error_count" },
-  { title: "Backoff", dataIndex: "backoff_until", key: "backoff_until" },
-  { title: "Last OK", dataIndex: "last_ok_at", key: "last_ok_at" },
-  { title: "Last Fail", dataIndex: "last_fail_at", key: "last_fail_at" },
+  { title: "标签", dataIndex: "label", key: "label" },
+  { title: "启用", dataIndex: "enabled", key: "enabled", render: (value) => (value ? "是" : "否") },
+  { title: "掩码令牌", dataIndex: "refresh_token_masked", key: "refresh_token_masked" },
+  { title: "权重", dataIndex: "weight", key: "weight" },
+  { title: "错误次数", dataIndex: "error_count", key: "error_count" },
+  { title: "退避截止", dataIndex: "backoff_until", key: "backoff_until" },
+  { title: "最近成功", dataIndex: "last_ok_at", key: "last_ok_at" },
+  { title: "最近失败", dataIndex: "last_fail_at", key: "last_fail_at" },
   {
-    title: "Actions",
+    title: "操作",
     key: "actions",
-    render: (_, r) => (
+    render: (_, row) => (
       <Space wrap>
-        <Button
-          size="small"
-          onClick={() => actions.onTestRefresh(r.id)}
-          loading={actions.testPendingId === r.id}
-        >
+        <Button size="small" onClick={() => actions.onTestRefresh(row.id)} loading={actions.testPendingId === row.id}>
           测试刷新
         </Button>
-        <Button
-          size="small"
-          onClick={() => actions.onResetFailures(r.id)}
-          loading={actions.resetPendingId === r.id}
-        >
-          重置失败退避
+        <Button size="small" onClick={() => actions.onResetFailures(row.id)} loading={actions.resetPendingId === row.id}>
+          重置失败计数
         </Button>
       </Space>
     ),
@@ -100,7 +92,7 @@ const columns = (actions: {
 ];
 
 export function TokensPage() {
-  const qc = useQueryClient();
+  const queryClient = useQueryClient();
   const [createOpen, setCreateOpen] = React.useState(false);
   const [createForm] = Form.useForm<CreateTokenFormValues>();
 
@@ -109,7 +101,7 @@ export function TokensPage() {
   const [actionErrorMessage, setActionErrorMessage] = React.useState<string | null>(null);
   const [actionErrorRequestId, setActionErrorRequestId] = React.useState<string | null>(null);
 
-  const q = useQuery({
+  const query = useQuery({
     queryKey: ["admin", "tokens"],
     queryFn: () => apiJson<TokensListResponse>("/admin/api/tokens"),
   });
@@ -133,10 +125,10 @@ export function TokensPage() {
     },
     onSuccess: (data) => {
       setCreateOpen(false);
-      setActionMessage(`Token created: ${data.token_id}`);
+      setActionMessage(`令牌创建成功：${data.token_id}`);
       setActionRequestId(data.request_id);
       createForm.resetFields();
-      qc.invalidateQueries({ queryKey: ["admin", "tokens"] });
+      queryClient.invalidateQueries({ queryKey: ["admin", "tokens"] });
     },
     onError: (err) => {
       setActionErrorMessage(messageFromError(err));
@@ -154,15 +146,15 @@ export function TokensPage() {
       setActionErrorRequestId(null);
     },
     onSuccess: (data) => {
-      const via = data.proxy ? ` via proxy #${data.proxy.endpoint_id} (pool #${data.proxy.pool_id})` : " (direct)";
-      setActionMessage(`Token refresh OK (expires_in=${data.expires_in})${via}`);
+      const routeInfo = data.proxy ? `（经代理 #${data.proxy.endpoint_id}，代理池 #${data.proxy.pool_id}）` : "（直连）";
+      setActionMessage(`令牌刷新成功，expires_in=${data.expires_in}${routeInfo}`);
       setActionRequestId(data.request_id);
-      qc.invalidateQueries({ queryKey: ["admin", "tokens"] });
+      queryClient.invalidateQueries({ queryKey: ["admin", "tokens"] });
     },
     onError: (err) => {
       setActionErrorMessage(messageFromError(err));
       setActionErrorRequestId(requestIdFromError(err));
-      qc.invalidateQueries({ queryKey: ["admin", "tokens"] });
+      queryClient.invalidateQueries({ queryKey: ["admin", "tokens"] });
     },
   });
 
@@ -176,9 +168,9 @@ export function TokensPage() {
       setActionErrorRequestId(null);
     },
     onSuccess: (data) => {
-      setActionMessage(`Token failures reset: ${data.token_id}`);
+      setActionMessage(`已重置失败计数：${data.token_id}`);
       setActionRequestId(data.request_id);
-      qc.invalidateQueries({ queryKey: ["admin", "tokens"] });
+      queryClient.invalidateQueries({ queryKey: ["admin", "tokens"] });
     },
     onError: (err) => {
       setActionErrorMessage(messageFromError(err));
@@ -189,22 +181,22 @@ export function TokensPage() {
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
       <Typography.Title level={3} style={{ margin: 0 }}>
-        Tokens
+        Pixiv 令牌管理
       </Typography.Title>
 
       {actionMessage ? <Alert type="success" showIcon message={actionMessage} /> : null}
-      {actionRequestId ? <Typography.Text type="secondary">request_id: {actionRequestId}</Typography.Text> : null}
+      {actionRequestId ? <Typography.Text type="secondary">请求ID: {actionRequestId}</Typography.Text> : null}
       {actionErrorMessage ? <Alert type="error" showIcon message={actionErrorMessage} /> : null}
-      {actionErrorRequestId ? <Typography.Text type="secondary">request_id: {actionErrorRequestId}</Typography.Text> : null}
+      {actionErrorRequestId ? <Typography.Text type="secondary">请求ID: {actionErrorRequestId}</Typography.Text> : null}
 
       <Space wrap>
         <Button type="primary" onClick={() => setCreateOpen(true)}>
-          新增 Token
+          新增令牌
         </Button>
       </Space>
 
       <Modal
-        title="新增 Token"
+        title="新增令牌"
         open={createOpen}
         onCancel={() => {
           setCreateOpen(false);
@@ -217,29 +209,33 @@ export function TokensPage() {
           form={createForm}
           layout="vertical"
           initialValues={{ label: "", refresh_token: "", enabled: true, weight: 1.0 }}
-          onFinish={(v) => createToken.mutate(v)}
+          onFinish={(values) => createToken.mutate(values)}
         >
-          <Form.Item label="Label" name="label">
-            <Input placeholder="acc1 (optional)" />
+          <Form.Item label="标签（可选）" name="label">
+            <Input placeholder="例如：主账号" />
           </Form.Item>
+
           <Form.Item
-            label="Refresh token"
+            label="刷新令牌"
             name="refresh_token"
-            rules={[{ required: true, message: "refresh token is required" }]}
+            rules={[{ required: true, message: "请输入刷新令牌" }]}
           >
-            <Input.Password placeholder="required" />
+            <Input.Password placeholder="必填" />
           </Form.Item>
-          <Form.Item label="Enabled" name="enabled" valuePropName="checked">
+
+          <Form.Item label="启用" name="enabled" valuePropName="checked">
             <Switch />
           </Form.Item>
-          <Form.Item label="Weight" name="weight" rules={[{ required: true, message: "weight is required" }]}>
+
+          <Form.Item label="权重" name="weight" rules={[{ required: true, message: "请输入权重" }]}>
             <InputNumber min={0} max={100} step={0.1} style={{ width: 180 }} />
           </Form.Item>
+
           <Alert
             type="info"
             showIcon
-            message="Security"
-            description="refresh_token is write-only: it will never be displayed again after saving."
+            message="安全说明"
+            description="刷新令牌只写入不回显，保存后不会再次显示明文。"
           />
 
           <Space style={{ width: "100%", justifyContent: "flex-end" }}>
@@ -259,31 +255,31 @@ export function TokensPage() {
         </Form>
       </Modal>
 
-      {q.isLoading ? (
+      {query.isLoading ? (
         <Skeleton active />
-      ) : q.isError ? (
+      ) : query.isError ? (
         <Alert
           type="error"
           showIcon
-          message="Failed to load tokens"
-          description={requestIdFromError(q.error) ? `request_id: ${requestIdFromError(q.error)}` : ""}
+          message="加载令牌列表失败"
+          description={requestIdFromError(query.error) ? `请求ID: ${requestIdFromError(query.error)}` : ""}
         />
-      ) : !q.data ? (
+      ) : !query.data ? (
         <Skeleton active />
-      ) : q.data.items.length === 0 ? (
-        <Alert type="info" showIcon message="No tokens" description="Add at least one token to enable Pixiv API jobs." />
+      ) : query.data.items.length === 0 ? (
+        <Alert type="info" showIcon message="暂无令牌" description="请至少添加一个令牌，才能执行 Pixiv 接口相关任务。" />
       ) : (
         <Card>
-          <Typography.Text type="secondary">request_id: {q.data.request_id}</Typography.Text>
+          <Typography.Text type="secondary">请求ID: {query.data.request_id}</Typography.Text>
           <Table<TokenItem>
-            rowKey={(r) => r.id}
+            rowKey={(row) => row.id}
             columns={columns({
               onTestRefresh: (id) => testRefresh.mutate(id),
               onResetFailures: (id) => resetFailures.mutate(id),
               testPendingId: testRefresh.isPending ? testRefresh.variables ?? null : null,
               resetPendingId: resetFailures.isPending ? resetFailures.variables ?? null : null,
             })}
-            dataSource={q.data.items}
+            dataSource={query.data.items}
             pagination={false}
             size="small"
             style={{ marginTop: 12 }}

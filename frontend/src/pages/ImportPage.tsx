@@ -1,4 +1,4 @@
-import { useMutation } from "@tanstack/react-query";
+﻿import { useMutation } from "@tanstack/react-query";
 import { Alert, Button, Card, Form, Input, Space, Switch, Typography } from "antd";
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -35,16 +35,17 @@ export function ImportPage() {
   const [requestId, setRequestId] = useState<string | null>(null);
   const [result, setResult] = useState<ImportCreateResponse | null>(null);
 
-  const m = useMutation({
+  const mutation = useMutation({
     mutationFn: (values: ImportFormValues) => {
       if (file) {
-        const fd = new FormData();
-        fd.append("file", file);
-        fd.append("dry_run", values.dry_run ? "true" : "false");
-        fd.append("hydrate_on_import", values.hydrate_on_import ? "true" : "false");
-        fd.append("source", "manual");
-        return apiJson<ImportCreateResponse>("/admin/api/imports", { method: "POST", body: fd });
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("dry_run", values.dry_run ? "true" : "false");
+        formData.append("hydrate_on_import", values.hydrate_on_import ? "true" : "false");
+        formData.append("source", "manual");
+        return apiJson<ImportCreateResponse>("/admin/api/imports", { method: "POST", body: formData });
       }
+
       return apiJson<ImportCreateResponse>("/admin/api/imports", {
         method: "POST",
         body: JSON.stringify({
@@ -77,29 +78,27 @@ export function ImportPage() {
         setErrorMessage(err.message);
         return;
       }
-      setErrorMessage("Import failed");
+      setErrorMessage("导入失败");
     },
   });
 
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
       <Typography.Title level={3} style={{ margin: 0 }}>
-        Import
+        导入图片链接
       </Typography.Title>
 
       {errorMessage ? <Alert type="error" message={errorMessage} showIcon /> : null}
-      {requestId ? (
-        <Typography.Text type="secondary">request_id: {requestId}</Typography.Text>
-      ) : null}
+      {requestId ? <Typography.Text type="secondary">请求ID: {requestId}</Typography.Text> : null}
 
       <Card>
         <Form<ImportFormValues>
           form={form}
           layout="vertical"
           initialValues={{ dry_run: false, hydrate_on_import: false, text: "" }}
-          onFinish={(v) => m.mutate(v)}
+          onFinish={(values) => mutation.mutate(values)}
         >
-          <Form.Item label="Upload (.txt, optional)">
+          <Form.Item label="上传文本文件（可选，.txt）">
             <input
               data-testid="import-file-input"
               type="file"
@@ -108,51 +107,52 @@ export function ImportPage() {
             />
             <div style={{ marginTop: 8 }}>
               <Typography.Text type="secondary">
-                {file ? `Selected: ${file.name}` : "No file selected (paste URLs below)."}
+                {file ? `已选择文件：${file.name}` : "未选择文件（可在下方粘贴链接）。"}
               </Typography.Text>
             </div>
           </Form.Item>
 
           <Form.Item
-            label="URLs"
+            label="链接列表"
             name="text"
             rules={[
               {
-                validator: async (_rule, value) => {
+                validator: async (_, value) => {
                   if (file) return Promise.resolve();
                   if (String(value || "").trim()) return Promise.resolve();
-                  return Promise.reject(new Error("Please paste Pixiv original URLs or upload a .txt file"));
+                  return Promise.reject(new Error("请粘贴 Pixiv 原图链接，或上传 .txt 文件"));
                 },
               },
             ]}
           >
-            <Input.TextArea rows={8} placeholder="One URL per line" disabled={Boolean(file)} />
+            <Input.TextArea rows={8} placeholder="每行一个链接" disabled={Boolean(file)} />
           </Form.Item>
 
           <Space size="large">
-            <Form.Item label="Dry run" name="dry_run" valuePropName="checked">
+            <Form.Item label="仅预览（不入库）" name="dry_run" valuePropName="checked">
               <Switch />
             </Form.Item>
-            <Form.Item label="Hydrate on import" name="hydrate_on_import" valuePropName="checked">
+            <Form.Item label="导入后立即补全元数据" name="hydrate_on_import" valuePropName="checked">
               <Switch />
             </Form.Item>
           </Space>
 
-          <Button type="primary" htmlType="submit">
-            导入
+          <Button type="primary" htmlType="submit" loading={mutation.isPending}>
+            开始导入
           </Button>
         </Form>
       </Card>
 
-      {m.isPending ? <Alert type="info" showIcon message="Importing..." /> : null}
+      {mutation.isPending ? <Alert type="info" showIcon message="正在导入..." /> : null}
       {result ? (
         <Alert
           type="success"
           showIcon
-          message={result.import_id ? "Import created" : "Dry run preview"}
-          description={`accepted: ${result.accepted}, deduped: ${result.deduped}, errors: ${result.errors.length}`}
+          message={result.import_id ? "导入任务已创建" : "预览完成"}
+          description={`接收: ${result.accepted}，去重: ${result.deduped}，错误: ${result.errors.length}`}
         />
       ) : null}
     </Space>
   );
 }
+

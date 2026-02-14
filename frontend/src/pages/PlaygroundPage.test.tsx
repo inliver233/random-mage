@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+﻿import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
 import React from "react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -42,8 +42,8 @@ describe("PlaygroundPage", () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText("Random Playground")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Run" }));
-    expect(await screen.findByText(/request_id:\s*req_play/)).toBeInTheDocument();
+    expect(await screen.findByText("随机接口调试")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "开始请求" }));
+    expect(await screen.findByText(/请求ID:\s*req_play/)).toBeInTheDocument();
   });
 });

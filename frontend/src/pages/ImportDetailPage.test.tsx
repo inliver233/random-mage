@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+﻿import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import React from "react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -66,10 +66,9 @@ describe("ImportDetailPage", () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText("Import #123")).toBeInTheDocument();
-    expect(await screen.findByText("request_id: req_import_123")).toBeInTheDocument();
+    expect(await screen.findByText("导入任务 #123")).toBeInTheDocument();
+    expect(await screen.findByText("请求ID: req_import_123")).toBeInTheDocument();
     expect(await screen.findByText("manual")).toBeInTheDocument();
     expect(await screen.findByText("import_images")).toBeInTheDocument();
   });
 });
-

@@ -43,49 +43,54 @@ function requestIdFromError(err: unknown): string | null {
   return err.body?.request_id ? String(err.body.request_id) : null;
 }
 
-function formatProxy(p: ProxyRef | null): string {
-  if (!p) return "";
-  const host = String(p.host || "").includes(":") && !String(p.host || "").startsWith("[") ? `[${p.host}]` : p.host;
-  const user = String(p.username || "").trim();
+function formatProxy(proxy: ProxyRef | null): string {
+  if (!proxy) return "";
+  const host = String(proxy.host || "").includes(":") && !String(proxy.host || "").startsWith("[") ? `[${proxy.host}]` : proxy.host;
+  const user = String(proxy.username || "").trim();
   const auth = user ? `${user}@` : "";
-  return `${p.scheme}://${auth}${host}:${p.port}`;
+  return `${proxy.scheme}://${auth}${host}:${proxy.port}`;
+}
+
+function modeLabel(mode: "primary" | "override"): string {
+  return mode === "override" ? "覆盖代理" : "主代理";
 }
 
 const columns: ColumnsType<BindingItem> = [
   {
-    title: "Token",
+    title: "令牌",
     key: "token",
-    render: (_, r) => (r.token.label ? `${r.token.label} (#${r.token.id})` : `#${r.token.id}`),
+    render: (_, row) => (row.token.label ? `${row.token.label}（#${row.token.id}）` : `#${row.token.id}`),
   },
   {
-    title: "Pool",
+    title: "代理池",
     key: "pool",
-    render: (_, r) => `${r.pool.name} (#${r.pool.id})`,
+    render: (_, row) => `${row.pool.name}（#${row.pool.id}）`,
   },
   {
-    title: "Effective",
+    title: "当前生效代理",
     key: "effective",
-    render: (_, r) => (r.effective_mode === "override" ? formatProxy(r.override_proxy) : formatProxy(r.primary_proxy)),
+    render: (_, row) => (row.effective_mode === "override" ? formatProxy(row.override_proxy) : formatProxy(row.primary_proxy)),
   },
-  { title: "Mode", dataIndex: "effective_mode", key: "effective_mode" },
-  { title: "Primary", key: "primary_proxy", render: (_, r) => formatProxy(r.primary_proxy) },
-  { title: "Override", key: "override_proxy", render: (_, r) => formatProxy(r.override_proxy) || "-" },
-  { title: "Override TTL", dataIndex: "override_expires_at", key: "override_expires_at", render: (v) => v || "-" },
+  { title: "生效模式", dataIndex: "effective_mode", key: "effective_mode", render: (value) => modeLabel(value) },
+  { title: "主代理", key: "primary_proxy", render: (_, row) => formatProxy(row.primary_proxy) },
+  { title: "覆盖代理", key: "override_proxy", render: (_, row) => formatProxy(row.override_proxy) || "-" },
+  { title: "覆盖过期时间", dataIndex: "override_expires_at", key: "override_expires_at", render: (value) => value || "-" },
 ];
 
 export function BindingsPage() {
-  const qc = useQueryClient();
+  const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
+
   const initialPoolId = useMemo(() => {
     const raw = searchParams.get("pool_id");
-    const n = raw ? Number.parseInt(raw, 10) : 1;
-    return Number.isFinite(n) && n > 0 ? n : 1;
+    const value = raw ? Number.parseInt(raw, 10) : 1;
+    return Number.isFinite(value) && value > 0 ? value : 1;
   }, [searchParams]);
 
   const [poolId, setPoolId] = useState<number>(initialPoolId);
   const [maxTokensPerProxy, setMaxTokensPerProxy] = useState<number>(2);
 
-  const q = useQuery({
+  const query = useQuery({
     queryKey: ["admin", "bindings", { poolId }],
     queryFn: () => apiJson<BindingsListResponse>(`/admin/api/bindings?pool_id=${poolId}`),
   });
@@ -97,32 +102,37 @@ export function BindingsPage() {
         body: JSON.stringify({ pool_id: poolId, max_tokens_per_proxy: maxTokensPerProxy }),
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["admin", "bindings", { poolId }] });
+      queryClient.invalidateQueries({ queryKey: ["admin", "bindings", { poolId }] });
     },
   });
 
   const setPoolIdAndSyncUrl = (next: number) => {
-    const n = Number.isFinite(next) && next > 0 ? next : 1;
-    setPoolId(n);
-    const sp = new URLSearchParams(searchParams);
-    sp.set("pool_id", String(n));
-    setSearchParams(sp, { replace: true });
+    const value = Number.isFinite(next) && next > 0 ? next : 1;
+    setPoolId(value);
+    const params = new URLSearchParams(searchParams);
+    params.set("pool_id", String(value));
+    setSearchParams(params, { replace: true });
   };
 
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
       <Typography.Title level={3} style={{ margin: 0 }}>
-        Bindings
+        令牌与代理绑定
       </Typography.Title>
 
       <Card>
         <Space wrap>
-          <Typography.Text>Pool ID:</Typography.Text>
-          <InputNumber min={1} value={poolId} onChange={(v) => setPoolIdAndSyncUrl(Number(v || 1))} />
-          <Typography.Text>Max tokens / proxy:</Typography.Text>
-          <InputNumber min={1} max={1000} value={maxTokensPerProxy} onChange={(v) => setMaxTokensPerProxy(Number(v || 2))} />
+          <Typography.Text>代理池ID:</Typography.Text>
+          <InputNumber min={1} value={poolId} onChange={(value) => setPoolIdAndSyncUrl(Number(value || 1))} />
+          <Typography.Text>单代理最多绑定令牌数:</Typography.Text>
+          <InputNumber
+            min={1}
+            max={1000}
+            value={maxTokensPerProxy}
+            onChange={(value) => setMaxTokensPerProxy(Number(value || 2))}
+          />
           <Button type="primary" onClick={() => recompute.mutate()} loading={recompute.isPending}>
-            Recompute
+            重新计算绑定
           </Button>
         </Space>
 
@@ -130,47 +140,48 @@ export function BindingsPage() {
           <Alert
             type="error"
             showIcon
-            message="Recompute failed"
-            description={requestIdFromError(recompute.error) ? `request_id: ${requestIdFromError(recompute.error)}` : ""}
+            message="重新计算绑定失败"
+            description={requestIdFromError(recompute.error) ? `请求ID: ${requestIdFromError(recompute.error)}` : ""}
             style={{ marginTop: 12 }}
           />
         ) : null}
+
         {recompute.isSuccess ? (
           <Alert
             type="success"
             showIcon
-            message="Recomputed"
-            description={`recomputed: ${recompute.data.recomputed}, request_id: ${recompute.data.request_id}`}
+            message="重新计算绑定完成"
+            description={`重算数量: ${recompute.data.recomputed}，请求ID: ${recompute.data.request_id}`}
             style={{ marginTop: 12 }}
           />
         ) : null}
       </Card>
 
-      {q.isLoading ? (
+      {query.isLoading ? (
         <Skeleton active />
-      ) : q.isError ? (
+      ) : query.isError ? (
         <Alert
           type="error"
           showIcon
-          message="Failed to load bindings"
-          description={requestIdFromError(q.error) ? `request_id: ${requestIdFromError(q.error)}` : ""}
+          message="加载绑定列表失败"
+          description={requestIdFromError(query.error) ? `请求ID: ${requestIdFromError(query.error)}` : ""}
         />
-      ) : !q.data ? (
+      ) : !query.data ? (
         <Skeleton active />
-      ) : q.data.items.length === 0 ? (
+      ) : query.data.items.length === 0 ? (
         <Alert
           type="info"
           showIcon
-          message="No bindings"
-          description="Create a proxy pool, add endpoints to it, then click Recompute."
+          message="暂无绑定数据"
+          description="请先创建代理池并加入代理节点，然后点击“重新计算绑定”。"
         />
       ) : (
         <Card>
-          <Typography.Text type="secondary">request_id: {q.data.request_id}</Typography.Text>
+          <Typography.Text type="secondary">请求ID: {query.data.request_id}</Typography.Text>
           <Table<BindingItem>
-            rowKey={(r) => r.id}
+            rowKey={(row) => row.id}
             columns={columns}
-            dataSource={q.data.items}
+            dataSource={query.data.items}
             pagination={false}
             size="small"
             style={{ marginTop: 12 }}

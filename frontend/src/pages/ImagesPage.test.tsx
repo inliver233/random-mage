@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+﻿import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -56,8 +56,8 @@ describe("ImagesPage", () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText("Images")).toBeInTheDocument();
+    expect(await screen.findByText("图片列表")).toBeInTheDocument();
     expect(await screen.findByText("111")).toBeInTheDocument();
-    expect(await screen.findByText(/request_id:\s*req_images/)).toBeInTheDocument();
+    expect(await screen.findByText(/请求ID:\s*req_images/)).toBeInTheDocument();
   });
 });

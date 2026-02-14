@@ -75,37 +75,50 @@ function requestIdFromError(err: unknown): string | null {
 }
 
 const columns: ColumnsType<ProxyEndpointItem> = [
-  { title: "ID", dataIndex: "id", key: "id" },
-  { title: "URI", dataIndex: "uri_masked", key: "uri_masked" },
-  { title: "Enabled", dataIndex: "enabled", key: "enabled", render: (v) => String(Boolean(v)) },
-  { title: "Status", dataIndex: "status", key: "status" },
+  { title: "节点ID", dataIndex: "id", key: "id" },
+  { title: "代理地址（掩码）", dataIndex: "uri_masked", key: "uri_masked" },
+  { title: "启用", dataIndex: "enabled", key: "enabled", render: (value) => (value ? "是" : "否") },
   {
-    title: "Pools",
+    title: "状态",
+    dataIndex: "status",
+    key: "status",
+    render: (value: string | null) => {
+      const normalized = String(value || "").trim().toLowerCase();
+      if (!normalized) return "-";
+      if (normalized === "ok") return "正常";
+      if (normalized === "fail" || normalized === "failed") return "异常";
+      if (normalized === "timeout") return "超时";
+      return value;
+    },
+  },
+  {
+    title: "所属代理池",
     key: "pools",
-    render: (_, r) =>
-      (r.pools || []).length
-        ? (r.pools || [])
-            .map((p) => `${p.name}(#${p.id}) w=${p.weight} ${p.pool_enabled && p.member_enabled ? "on" : "off"}`)
-            .join(", ")
+    render: (_, row) =>
+      (row.pools || []).length
+        ? (row.pools || [])
+            .map((pool) => `${pool.name}(#${pool.id}) 权重=${pool.weight} ${pool.pool_enabled && pool.member_enabled ? "启用" : "停用"}`)
+            .join("，")
         : "-",
   },
   {
-    title: "Bindings",
+    title: "绑定统计",
     key: "bindings",
-    render: (_, r) =>
-      r.bindings ? `primary=${r.bindings.primary_count}, override=${r.bindings.override_count}` : "-",
+    render: (_, row) =>
+      row.bindings ? `主绑定=${row.bindings.primary_count}，覆盖绑定=${row.bindings.override_count}` : "-",
   },
-  { title: "OK/Fail", key: "ok_fail", render: (_, r) => `${r.success_count}/${r.failure_count}` },
-  { title: "Last OK", dataIndex: "last_ok_at", key: "last_ok_at", render: (v) => v || "-" },
-  { title: "Last Fail", dataIndex: "last_fail_at", key: "last_fail_at", render: (v) => v || "-" },
-  { title: "Latency(ms)", dataIndex: "latency_ms", key: "latency_ms" },
-  { title: "Blacklisted", dataIndex: "blacklisted_until", key: "blacklisted_until" },
-  { title: "Last error", dataIndex: "last_error", key: "last_error" },
+  { title: "成功/失败", key: "ok_fail", render: (_, row) => `${row.success_count}/${row.failure_count}` },
+  { title: "最近成功", dataIndex: "last_ok_at", key: "last_ok_at", render: (value) => value || "-" },
+  { title: "最近失败", dataIndex: "last_fail_at", key: "last_fail_at", render: (value) => value || "-" },
+  { title: "延迟(ms)", dataIndex: "latency_ms", key: "latency_ms" },
+  { title: "黑名单至", dataIndex: "blacklisted_until", key: "blacklisted_until" },
+  { title: "最后错误", dataIndex: "last_error", key: "last_error" },
 ];
 
 export function ProxiesPage() {
-  const qc = useQueryClient();
-  const q = useQuery({
+  const queryClient = useQueryClient();
+
+  const query = useQuery({
     queryKey: ["admin", "proxies", "endpoints"],
     queryFn: () => apiJson<ProxiesEndpointsResponse>("/admin/api/proxies/endpoints"),
   });
@@ -139,7 +152,7 @@ export function ProxiesPage() {
       setManualResult(data);
       setManualRequestId(data.request_id);
       manualForm.setFieldValue("text", "");
-      qc.invalidateQueries({ queryKey: ["admin", "proxies", "endpoints"] });
+      queryClient.invalidateQueries({ queryKey: ["admin", "proxies", "endpoints"] });
     },
     onError: (err) => {
       if (err instanceof ApiError) {
@@ -151,7 +164,7 @@ export function ProxiesPage() {
         setManualErrorMessage(err.message);
         return;
       }
-      setManualErrorMessage("Import failed");
+      setManualErrorMessage("手动导入失败");
     },
   });
 
@@ -163,8 +176,8 @@ export function ProxiesPage() {
       setProbeJobId(null);
     },
     onSuccess: (data) => {
-      setProbeJobId(data.job_id);
       setProbeRequestId(data.request_id);
+      setProbeJobId(data.job_id);
     },
     onError: (err) => {
       if (err instanceof ApiError) {
@@ -176,7 +189,7 @@ export function ProxiesPage() {
         setProbeErrorMessage(err.message);
         return;
       }
-      setProbeErrorMessage("Probe enqueue failed");
+      setProbeErrorMessage("探测任务入队失败");
     },
   });
 
@@ -194,8 +207,7 @@ export function ProxiesPage() {
     onSuccess: (data) => {
       setEasyResult(data);
       setEasyRequestId(data.request_id);
-      easyForm.setFieldValue("password", "");
-      qc.invalidateQueries({ queryKey: ["admin", "proxies", "endpoints"] });
+      queryClient.invalidateQueries({ queryKey: ["admin", "proxies", "endpoints"] });
     },
     onError: (err) => {
       if (err instanceof ApiError) {
@@ -207,155 +219,152 @@ export function ProxiesPage() {
         setEasyErrorMessage(err.message);
         return;
       }
-      setEasyErrorMessage("easy_proxies import failed");
+      setEasyErrorMessage("从 easy-proxies 导入失败");
     },
   });
 
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
       <Typography.Title level={3} style={{ margin: 0 }}>
-        Proxies
+        代理管理
       </Typography.Title>
 
-      <Card title="Import (manual)">
+      <Card title="手动导入代理节点">
         {manualErrorMessage ? <Alert type="error" showIcon message={manualErrorMessage} /> : null}
-        {manualRequestId ? <Typography.Text type="secondary">request_id: {manualRequestId}</Typography.Text> : null}
+        {manualRequestId ? <Typography.Text type="secondary">请求ID: {manualRequestId}</Typography.Text> : null}
 
         <Form<ManualImportFormValues>
           form={manualForm}
           layout="vertical"
-          initialValues={{ source: "manual", conflict_policy: "overwrite", text: "" }}
-          onFinish={(v) => manualImport.mutate(v)}
+          initialValues={{ text: "", source: "manual", conflict_policy: "overwrite" }}
+          onFinish={(values) => manualImport.mutate(values)}
         >
-          <Form.Item
-            label="Text (one URI per line)"
-            name="text"
-            rules={[{ required: true, message: "text is required" }]}
-          >
+          <Form.Item label="代理地址（每行一个）" name="text" rules={[{ required: true, message: "请输入代理地址" }]}>
             <Input.TextArea rows={6} placeholder="http://user:pass@1.2.3.4:8080" />
           </Form.Item>
-          <Space wrap>
-            <Form.Item label="Source" name="source">
-              <Select options={[{ value: "manual", label: "manual" }]} style={{ minWidth: 160 }} />
-            </Form.Item>
-            <Form.Item label="Conflict policy" name="conflict_policy">
-              <Select
-                options={[
-                  { value: "overwrite", label: "overwrite" },
-                  { value: "skip", label: "skip" },
-                ]}
-                style={{ minWidth: 220 }}
-              />
-            </Form.Item>
-          </Space>
+          <Form.Item label="冲突策略" name="conflict_policy">
+            <Select
+              options={[
+                { value: "overwrite", label: "覆盖同地址节点" },
+                { value: "skip", label: "跳过同地址节点" },
+              ]}
+              style={{ minWidth: 220 }}
+            />
+          </Form.Item>
+
           <Button type="primary" htmlType="submit" loading={manualImport.isPending}>
             导入
           </Button>
         </Form>
-        {manualImport.isPending ? <Alert type="info" showIcon message="Importing..." style={{ marginTop: 12 }} /> : null}
+
+        {manualImport.isPending ? <Alert type="info" showIcon message="正在导入代理节点..." style={{ marginTop: 12 }} /> : null}
         {manualResult ? (
           <Alert
             type="success"
             showIcon
-            message="Imported"
-            description={`created: ${manualResult.created}, updated: ${manualResult.updated}, skipped: ${manualResult.skipped}, errors: ${manualResult.errors.length}`}
+            message="手动导入完成"
+            description={`新增: ${manualResult.created}，更新: ${manualResult.updated}，跳过: ${manualResult.skipped}，错误: ${manualResult.errors.length}`}
             style={{ marginTop: 12 }}
           />
         ) : null}
+
         <Alert
           type="info"
           showIcon
-          message="Security"
-          description="Proxy passwords are write-only: stored encrypted and never displayed; list shows masked URIs."
+          message="安全说明"
+          description="代理密码仅写入不回显，列表中只显示脱敏后的地址。"
           style={{ marginTop: 12 }}
         />
       </Card>
 
-      <Card title="easy_proxies">
+      <Card title="从外部代理服务导入">
         {easyErrorMessage ? <Alert type="error" showIcon message={easyErrorMessage} /> : null}
-        {easyRequestId ? <Typography.Text type="secondary">request_id: {easyRequestId}</Typography.Text> : null}
+        {easyRequestId ? <Typography.Text type="secondary">请求ID: {easyRequestId}</Typography.Text> : null}
 
         <Form<EasyProxiesImportFormValues>
           form={easyForm}
           layout="vertical"
           initialValues={{ base_url: "", password: "", conflict_policy: "skip_non_easy_proxies" }}
-          onFinish={(v) => easyImport.mutate(v)}
+          onFinish={(values) => easyImport.mutate(values)}
         >
-          <Form.Item label="Base URL" name="base_url" rules={[{ required: true, message: "base_url is required" }]}>
+          <Form.Item label="服务地址" name="base_url" rules={[{ required: true, message: "请输入 easy-proxies 地址" }]}>
             <Input placeholder="http://easy-proxies:9090" />
           </Form.Item>
-          <Form.Item label="Password" name="password" rules={[{ required: true, message: "password is required" }]}>
-            <Input.Password placeholder="required" />
+          <Form.Item label="访问密码" name="password" rules={[{ required: true, message: "请输入访问密码" }]}>
+            <Input.Password placeholder="必填" />
           </Form.Item>
-          <Form.Item label="Conflict policy" name="conflict_policy">
+          <Form.Item label="冲突策略" name="conflict_policy">
             <Select
               options={[
-                { value: "overwrite", label: "overwrite" },
-                { value: "skip_non_easy_proxies", label: "skip_non_easy_proxies" },
+                { value: "overwrite", label: "覆盖同地址节点" },
+                { value: "skip_non_easy_proxies", label: "仅覆盖 easy-proxies 导入的节点" },
               ]}
             />
           </Form.Item>
+
           <Button type="primary" htmlType="submit" loading={easyImport.isPending}>
-            从 easy_proxies 导入
+            开始导入
           </Button>
         </Form>
-        {easyImport.isPending ? <Alert type="info" showIcon message="Importing from easy_proxies..." style={{ marginTop: 12 }} /> : null}
+
+        {easyImport.isPending ? <Alert type="info" showIcon message="正在从外部代理服务导入..." style={{ marginTop: 12 }} /> : null}
         {easyResult ? (
           <Alert
             type="success"
             showIcon
-            message="easy_proxies imported"
-            description={`created: ${easyResult.created}, updated: ${easyResult.updated}, skipped: ${easyResult.skipped}, errors: ${easyResult.errors.length}`}
+            message="外部代理服务导入完成"
+            description={`新增: ${easyResult.created}，更新: ${easyResult.updated}，跳过: ${easyResult.skipped}，错误: ${easyResult.errors.length}`}
             style={{ marginTop: 12 }}
           />
         ) : null}
       </Card>
 
-      <Card title="Endpoints">
+      <Card title="代理节点列表">
         <Space wrap style={{ marginBottom: 12 }}>
           <Button type="primary" onClick={() => probe.mutate()} loading={probe.isPending}>
-            探测健康（入队）
+            启动健康探测任务
           </Button>
-          <Button onClick={() => q.refetch()} loading={q.isFetching}>
+          <Button onClick={() => query.refetch()} loading={query.isFetching}>
             刷新列表
           </Button>
         </Space>
-        {probe.isPending ? <Alert type="info" showIcon message="Enqueueing probe job..." style={{ marginBottom: 12 }} /> : null}
+
+        {probe.isPending ? <Alert type="info" showIcon message="探测任务入队中..." style={{ marginBottom: 12 }} /> : null}
         {probeErrorMessage ? <Alert type="error" showIcon message={probeErrorMessage} style={{ marginBottom: 12 }} /> : null}
         {probeJobId ? (
           <Alert
             type="success"
             showIcon
-            message="probe enqueued"
-            description={`job_id: ${probeJobId}`}
+            message="探测任务已入队"
+            description={`任务ID: ${probeJobId}`}
             style={{ marginBottom: 12 }}
           />
         ) : null}
-        {probeRequestId ? <Typography.Text type="secondary">request_id: {probeRequestId}</Typography.Text> : null}
+        {probeRequestId ? <Typography.Text type="secondary">请求ID: {probeRequestId}</Typography.Text> : null}
 
-        {q.isLoading ? (
+        {query.isLoading ? (
           <Skeleton active />
-        ) : q.isError ? (
+        ) : query.isError ? (
           <Alert
             type="error"
             showIcon
-            message="Failed to load proxy endpoints"
-            description={requestIdFromError(q.error) ? `request_id: ${requestIdFromError(q.error)}` : ""}
+            message="加载代理节点失败"
+            description={requestIdFromError(query.error) ? `请求ID: ${requestIdFromError(query.error)}` : ""}
           />
-        ) : !q.data ? (
+        ) : !query.data ? (
           <Skeleton active />
-        ) : q.data.items.length === 0 ? (
-          <Alert type="info" showIcon message="No endpoints" description="Import proxy endpoints to enable proxy routing." />
+        ) : query.data.items.length === 0 ? (
+          <Alert type="info" showIcon message="暂无代理节点" description="请先导入代理节点以启用代理路由。" />
         ) : (
           <>
-            <Typography.Text type="secondary">request_id: {q.data.request_id}</Typography.Text>
+            <Typography.Text type="secondary">请求ID: {query.data.request_id}</Typography.Text>
             <Table<ProxyEndpointItem>
-              rowKey={(r) => r.id}
+              rowKey={(row) => row.id}
               columns={columns}
-              dataSource={q.data.items}
+              dataSource={query.data.items}
               pagination={false}
               size="small"
-              scroll={{ x: 1400 }}
+              scroll={{ x: 1500 }}
               style={{ marginTop: 12 }}
             />
           </>

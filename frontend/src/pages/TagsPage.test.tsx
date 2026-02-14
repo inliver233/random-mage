@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+﻿import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import React from "react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -54,9 +54,9 @@ describe("TagsPage", () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText("Tags")).toBeInTheDocument();
+    expect(await screen.findByText("标签列表")).toBeInTheDocument();
     expect(await screen.findByText("tag1")).toBeInTheDocument();
-    expect(await screen.findByText(/request_id:\s*req_tags/)).toBeInTheDocument();
+    expect(await screen.findByText(/请求ID:\s*req_tags/)).toBeInTheDocument();
   });
 
   it("navigates to playground with included_tags prefill", async () => {
@@ -73,11 +73,11 @@ describe("TagsPage", () => {
     );
 
     expect(await screen.findByText("tag1")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /从\s*该\s*标\s*签\s*随\s*机\s*一\s*张/ }));
-    expect(await screen.findByText("Random Playground")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /按此标签随机一张/ }));
+    expect(await screen.findByText("随机接口调试")).toBeInTheDocument();
 
     await waitFor(() => {
-      const input = screen.getByLabelText(/Included tags/i) as HTMLInputElement;
+      const input = screen.getByLabelText(/包含标签/) as HTMLInputElement;
       expect(input.value).toBe("tag1");
     });
   });

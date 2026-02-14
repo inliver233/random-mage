@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+﻿import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import React from "react";
 import { MemoryRouter } from "react-router-dom";
@@ -55,9 +55,9 @@ describe("BindingsPage", () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByText("Bindings")).toBeInTheDocument();
-    expect(await screen.findByText("acc1 (#1)")).toBeInTheDocument();
-    expect(await screen.findByText("pixiv (#1)")).toBeInTheDocument();
-    expect(await screen.findByText(/request_id:\s*req_bindings/)).toBeInTheDocument();
+    expect(await screen.findByText("令牌与代理绑定")).toBeInTheDocument();
+    expect(await screen.findByText("acc1（#1）")).toBeInTheDocument();
+    expect(await screen.findByText("pixiv（#1）")).toBeInTheDocument();
+    expect(await screen.findByText(/请求ID:\s*req_bindings/)).toBeInTheDocument();
   });
 });

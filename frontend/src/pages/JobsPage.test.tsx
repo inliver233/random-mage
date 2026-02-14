@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+﻿import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -54,9 +54,8 @@ describe("JobsPage", () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText("Jobs")).toBeInTheDocument();
-    expect(await screen.findByText("proxy_probe")).toBeInTheDocument();
-    expect(await screen.findByText(/request_id:\s*req_jobs/)).toBeInTheDocument();
+    expect(await screen.findByText("任务队列")).toBeInTheDocument();
+    expect(await screen.findByText("代理探测")).toBeInTheDocument();
+    expect(await screen.findByText(/请求ID:\s*req_jobs/)).toBeInTheDocument();
   });
 });
-

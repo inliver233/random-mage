@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+﻿import { useQuery } from "@tanstack/react-query";
 import { Alert, Card, Descriptions, Progress, Skeleton, Space, Typography } from "antd";
 import React from "react";
 import { useParams } from "react-router-dom";
@@ -38,85 +38,102 @@ function requestIdFromError(err: unknown): string | null {
   return err.body?.request_id ? String(err.body.request_id) : null;
 }
 
+function statusLabel(status: string): string {
+  switch (status) {
+    case "pending":
+      return "等待中";
+    case "running":
+      return "运行中";
+    case "completed":
+      return "已完成";
+    case "failed":
+      return "失败";
+    case "dlq":
+      return "死信";
+    default:
+      return status || "未知";
+  }
+}
+
 export function ImportDetailPage() {
   const params = useParams();
   const idRaw = String(params.id || "").trim();
   const id = idRaw && /^\d+$/.test(idRaw) ? idRaw : "";
 
-  const q = useQuery({
+  const query = useQuery({
     queryKey: ["admin", "imports", id],
     enabled: Boolean(id),
     queryFn: () => apiJson<ImportDetailResponse>(`/admin/api/imports/${id}`),
-    refetchInterval: (query) => {
-      const data = query.state.data as ImportDetailResponse | undefined;
+    refetchInterval: (state) => {
+      const data = state.state.data as ImportDetailResponse | undefined;
       const status = String(data?.item.job?.status || "");
       return status === "pending" || status === "running" ? 1000 : false;
     },
   });
 
   if (!id) {
-    return <Alert type="error" showIcon message="Invalid import id" />;
+    return <Alert type="error" showIcon message="导入ID不合法" />;
   }
 
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
       <Typography.Title level={3} style={{ margin: 0 }}>
-        Import #{id}
+        导入任务 #{id}
       </Typography.Title>
 
-      {q.isLoading ? (
+      {query.isLoading ? (
         <Skeleton active />
-      ) : q.isError ? (
+      ) : query.isError ? (
         <Alert
           type="error"
           showIcon
-          message="Failed to load import"
-          description={requestIdFromError(q.error) ? `request_id: ${requestIdFromError(q.error)}` : ""}
+          message="加载导入详情失败"
+          description={requestIdFromError(query.error) ? `请求ID: ${requestIdFromError(query.error)}` : ""}
         />
       ) : (
         <>
-          <Typography.Text type="secondary">request_id: {q.data?.request_id}</Typography.Text>
+          <Typography.Text type="secondary">请求ID: {query.data?.request_id}</Typography.Text>
 
-          {q.data?.item.job && (q.data.item.job.status === "pending" || q.data.item.job.status === "running") ? (
-            <Alert type="info" showIcon message="Import in progress (auto refresh every 1s)" />
+          {query.data?.item.job && (query.data.item.job.status === "pending" || query.data.item.job.status === "running") ? (
+            <Alert type="info" showIcon message="导入进行中（每1秒自动刷新）" />
           ) : null}
 
-          {q.data?.item.job && q.data.item.job.status === "pending" ? (
+          {query.data?.item.job && query.data.item.job.status === "pending" ? (
             <Alert
               type="warning"
               showIcon
-              message="Job is pending"
-              description="If it stays pending, start the worker process (python -m app.worker) or run the docker-compose worker service."
+              message="任务仍在等待执行"
+              description="如果长时间不动，请确认工作线程服务已经启动。"
             />
           ) : null}
 
-          <Card title="Summary">
+          <Card title="导入概览">
             <Descriptions size="small" column={2}>
-              <Descriptions.Item label="created_at">{q.data?.item.import.created_at}</Descriptions.Item>
-              <Descriptions.Item label="created_by">{q.data?.item.import.created_by}</Descriptions.Item>
-              <Descriptions.Item label="source">{q.data?.item.import.source}</Descriptions.Item>
-              <Descriptions.Item label="total">{q.data?.item.import.total}</Descriptions.Item>
-              <Descriptions.Item label="accepted">{q.data?.item.import.accepted}</Descriptions.Item>
-              <Descriptions.Item label="success">{q.data?.item.import.success}</Descriptions.Item>
-              <Descriptions.Item label="failed">{q.data?.item.import.failed}</Descriptions.Item>
+              <Descriptions.Item label="创建时间">{query.data?.item.import.created_at}</Descriptions.Item>
+              <Descriptions.Item label="创建人">{query.data?.item.import.created_by}</Descriptions.Item>
+              <Descriptions.Item label="来源">{query.data?.item.import.source}</Descriptions.Item>
+              <Descriptions.Item label="总数">{query.data?.item.import.total}</Descriptions.Item>
+              <Descriptions.Item label="接收">{query.data?.item.import.accepted}</Descriptions.Item>
+              <Descriptions.Item label="成功">{query.data?.item.import.success}</Descriptions.Item>
+              <Descriptions.Item label="失败">{query.data?.item.import.failed}</Descriptions.Item>
             </Descriptions>
 
-            {q.data?.item.job ? (
+            {query.data?.item.job ? (
               <div style={{ marginTop: 12 }}>
                 <Progress
                   percent={(() => {
-                    const accepted = Number(q.data?.item.import.accepted || 0);
-                    const total = Number(q.data?.item.import.total || 0);
-                    const denom = accepted > 0 ? accepted : total > 0 ? total : 0;
-                    const success = Number(q.data?.item.import.success || 0);
-                    if (denom <= 0) return 0;
-                    const pct = Math.round((success / denom) * 100);
-                    return Math.max(0, Math.min(100, pct));
+                    const accepted = Number(query.data?.item.import.accepted || 0);
+                    const total = Number(query.data?.item.import.total || 0);
+                    const base = accepted > 0 ? accepted : total > 0 ? total : 0;
+                    const success = Number(query.data?.item.import.success || 0);
+                    if (base <= 0) return 0;
+                    const percent = Math.round((success / base) * 100);
+                    return Math.max(0, Math.min(100, percent));
                   })()}
                   status={
-                    q.data.item.job.status === "completed"
+                    query.data.item.job.status === "completed"
                       ? "success"
-                      : q.data.item.job.status === "failed" || q.data.item.job.status === "dlq"
+                      : query.data.item.job.status === "failed" || query.data.item.job.status === "dlq"
                         ? "exception"
                         : "active"
                   }
@@ -125,24 +142,24 @@ export function ImportDetailPage() {
             ) : null}
           </Card>
 
-          <Card title="Job">
-            {q.data?.item.job ? (
+          <Card title="关联任务">
+            {query.data?.item.job ? (
               <Descriptions size="small" column={2}>
-                <Descriptions.Item label="id">{q.data.item.job.id}</Descriptions.Item>
-                <Descriptions.Item label="type">{q.data.item.job.type}</Descriptions.Item>
-                <Descriptions.Item label="status">{q.data.item.job.status}</Descriptions.Item>
-                <Descriptions.Item label="attempt">{q.data.item.job.attempt}</Descriptions.Item>
-                <Descriptions.Item label="max_attempts">{q.data.item.job.max_attempts}</Descriptions.Item>
-                <Descriptions.Item label="last_error">{q.data.item.job.last_error || ""}</Descriptions.Item>
+                <Descriptions.Item label="任务ID">{query.data.item.job.id}</Descriptions.Item>
+                <Descriptions.Item label="任务类型">{query.data.item.job.type}</Descriptions.Item>
+                <Descriptions.Item label="状态">{statusLabel(query.data.item.job.status)}</Descriptions.Item>
+                <Descriptions.Item label="重试次数">{query.data.item.job.attempt}</Descriptions.Item>
+                <Descriptions.Item label="最大重试">{query.data.item.job.max_attempts}</Descriptions.Item>
+                <Descriptions.Item label="最后错误">{query.data.item.job.last_error || ""}</Descriptions.Item>
               </Descriptions>
             ) : (
-              <Alert type="info" showIcon message="No job attached" />
+              <Alert type="info" showIcon message="暂无关联任务" />
             )}
           </Card>
 
-          <Card title="Detail JSON">
+          <Card title="详情数据（结构化）">
             <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
-              {JSON.stringify(q.data?.item.detail || {}, null, 2)}
+              {JSON.stringify(query.data?.item.detail || {}, null, 2)}
             </pre>
           </Card>
         </>
@@ -150,3 +167,4 @@ export function ImportDetailPage() {
     </Space>
   );
 }
+

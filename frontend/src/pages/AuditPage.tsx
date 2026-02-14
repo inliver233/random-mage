@@ -29,25 +29,25 @@ function requestIdFromError(err: unknown): string | null {
 }
 
 const columns: ColumnsType<AuditItem> = [
-  { title: "Created", dataIndex: "created_at", key: "created_at" },
-  { title: "Actor", dataIndex: "actor", key: "actor" },
-  { title: "Action", dataIndex: "action", key: "action" },
-  { title: "Resource", dataIndex: "resource", key: "resource" },
-  { title: "Record", dataIndex: "record_id", key: "record_id" },
-  { title: "Req", dataIndex: "request_id", key: "request_id" },
+  { title: "时间", dataIndex: "created_at", key: "created_at" },
+  { title: "操作者", dataIndex: "actor", key: "actor" },
+  { title: "动作", dataIndex: "action", key: "action" },
+  { title: "资源", dataIndex: "resource", key: "resource" },
+  { title: "记录ID", dataIndex: "record_id", key: "record_id" },
+  { title: "请求ID", dataIndex: "request_id", key: "request_id" },
   {
-    title: "Detail",
+    title: "详情",
     key: "detail_json",
-    render: (_, r) => (
+    render: (_, row) => (
       <pre style={{ margin: 0, maxWidth: 360, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-        {r.detail_json ? JSON.stringify(r.detail_json) : ""}
+        {row.detail_json ? JSON.stringify(row.detail_json) : ""}
       </pre>
     ),
   },
 ];
 
 export function AuditPage() {
-  const q = useQuery({
+  const query = useQuery({
     queryKey: ["admin", "audit", { limit: 50 }],
     queryFn: () => apiJson<AuditListResponse>("/admin/api/audit?limit=50"),
   });
@@ -55,29 +55,29 @@ export function AuditPage() {
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
       <Typography.Title level={3} style={{ margin: 0 }}>
-        Audit
+        审计日志
       </Typography.Title>
 
-      {q.isLoading ? (
+      {query.isLoading ? (
         <Skeleton active />
-      ) : q.isError ? (
+      ) : query.isError ? (
         <Alert
           type="error"
           showIcon
-          message="Failed to load audit logs"
-          description={requestIdFromError(q.error) ? `request_id: ${requestIdFromError(q.error)}` : ""}
+          message="加载审计日志失败"
+          description={requestIdFromError(query.error) ? `请求ID: ${requestIdFromError(query.error)}` : ""}
         />
-      ) : !q.data ? (
+      ) : !query.data ? (
         <Skeleton active />
-      ) : q.data.items.length === 0 ? (
-        <Alert type="info" showIcon message="No audit logs" description="Audit records will appear after admin actions." />
+      ) : query.data.items.length === 0 ? (
+        <Alert type="info" showIcon message="暂无审计日志" description="执行后台操作后，这里会显示审计记录。" />
       ) : (
         <Card>
-          <Typography.Text type="secondary">request_id: {q.data.request_id}</Typography.Text>
+          <Typography.Text type="secondary">请求ID: {query.data.request_id}</Typography.Text>
           <Table<AuditItem>
-            rowKey={(r) => r.id}
+            rowKey={(row) => row.id}
             columns={columns}
-            dataSource={q.data.items}
+            dataSource={query.data.items}
             pagination={false}
             size="small"
             style={{ marginTop: 12 }}

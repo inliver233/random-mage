@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+﻿import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import React from "react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -65,9 +65,9 @@ describe("ImportPage", () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText("Import")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /导\s*入/ })).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("One URL per line")).toBeInTheDocument();
+    expect(await screen.findByText("导入图片链接")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /开始导入/ })).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("每行一个链接")).toBeInTheDocument();
   });
 
   it("submits import and shows request_id", async () => {
@@ -82,11 +82,11 @@ describe("ImportPage", () => {
       </QueryClientProvider>,
     );
 
-    fireEvent.change(screen.getByPlaceholderText("One URL per line"), { target: { value: "https://example.com/1" } });
-    fireEvent.click(screen.getByRole("button", { name: /导\s*入/ }));
+    fireEvent.change(screen.getByPlaceholderText("每行一个链接"), { target: { value: "https://example.com/1" } });
+    fireEvent.click(screen.getByRole("button", { name: /开始导入/ }));
 
-    expect(await screen.findByText(/request_id:\s*req_import/)).toBeInTheDocument();
-    expect(await screen.findByText(/accepted:\s*1/)).toBeInTheDocument();
+    expect(await screen.findByText(/请求ID:\s*req_import/)).toBeInTheDocument();
+    expect(await screen.findByText(/接收:\s*1/)).toBeInTheDocument();
 
     await waitFor(() => {
       const fetchMock = globalThis.fetch as unknown as { mock: { calls: unknown[][] } };
@@ -110,9 +110,9 @@ describe("ImportPage", () => {
     const file = new File(["https://example.com/1\n"], "urls.txt", { type: "text/plain" });
     fireEvent.change(fileInput, { target: { files: [file] } });
 
-    fireEvent.click(screen.getByRole("button", { name: /导\s*入/ }));
+    fireEvent.click(screen.getByRole("button", { name: /开始导入/ }));
 
-    expect(await screen.findByText(/request_id:\s*req_import/)).toBeInTheDocument();
+    expect(await screen.findByText(/请求ID:\s*req_import/)).toBeInTheDocument();
 
     await waitFor(() => {
       const fetchMock = globalThis.fetch as unknown as { mock: { calls: unknown[][] } };

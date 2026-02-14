@@ -1,4 +1,4 @@
-import { useMutation } from "@tanstack/react-query";
+﻿import { useMutation } from "@tanstack/react-query";
 import { Alert, Button, Card, Col, Form, Input, InputNumber, Row, Select, Skeleton, Space, Switch, Typography } from "antd";
 import React, { useEffect } from "react";
 import { useLocation } from "react-router-dom";
@@ -127,7 +127,7 @@ async function fetchPlayground(values: PlaygroundFormValues): Promise<Playground
 
     const blob = await resp.blob();
     if (!("createObjectURL" in URL)) {
-      throw new Error("Browser does not support URL.createObjectURL");
+      throw new Error("当前浏览器不支持 URL.createObjectURL");
     }
     const src = URL.createObjectURL(blob);
     const headers = pickHeaders(resp.headers, [
@@ -154,7 +154,7 @@ async function fetchPlayground(values: PlaygroundFormValues): Promise<Playground
     url,
     request_id: reqId ?? payload.request_id,
     location: proxy,
-    note: proxy ? "Location header not available; showing proxy URL from JSON." : "Location header not available.",
+    note: proxy ? "未获取到 Location 响应头，已回退为结构化返回中的代理链接。" : "未获取到 Location 响应头。",
   };
 }
 
@@ -220,12 +220,12 @@ export function PlaygroundPage() {
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
       <Typography.Title level={3} style={{ margin: 0 }}>
-        Random Playground
+        随机接口调试
       </Typography.Title>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={8}>
-          <Card title="Filters">
+          <Card title="筛选条件">
             <Form<PlaygroundFormValues>
               form={form}
               layout="vertical"
@@ -249,22 +249,22 @@ export function PlaygroundPage() {
               }}
               onFinish={(v) => m.mutate(v)}
             >
-              <Form.Item label="Format" name="format">
+              <Form.Item label="返回格式" name="format">
                 <Select
                   options={[
-                    { value: "image", label: "image" },
-                    { value: "json", label: "json" },
-                    { value: "redirect", label: "redirect" },
+                    { value: "image", label: "图片流" },
+                    { value: "json", label: "JSON" },
+                    { value: "redirect", label: "重定向" },
                   ]}
                 />
               </Form.Item>
 
-              <Form.Item label="Attempts" name="attempts">
+              <Form.Item label="尝试次数" name="attempts">
                 <InputNumber min={1} max={10} style={{ width: "100%" }} />
               </Form.Item>
 
-              <Form.Item label="Seed" name="seed">
-                <Input placeholder="optional" />
+              <Form.Item label="随机种子" name="seed">
+                <Input placeholder="可选" />
               </Form.Item>
 
               <Form.Item label="R18" name="r18">
@@ -277,84 +277,84 @@ export function PlaygroundPage() {
                 />
               </Form.Item>
 
-              <Form.Item label="R18 strict" name="r18_strict" valuePropName="checked">
+              <Form.Item label="严格 R18 过滤" name="r18_strict" valuePropName="checked">
                 <Switch />
               </Form.Item>
 
-              <Form.Item label="Orientation" name="orientation">
+              <Form.Item label="画面方向" name="orientation">
                 <Select
                   options={[
-                    { value: "any", label: "any" },
-                    { value: "portrait", label: "portrait" },
-                    { value: "landscape", label: "landscape" },
-                    { value: "square", label: "square" },
+                    { value: "any", label: "不限" },
+                    { value: "portrait", label: "竖图" },
+                    { value: "landscape", label: "横图" },
+                    { value: "square", label: "方图" },
                   ]}
                 />
               </Form.Item>
 
-              <Form.Item label="Min width" name="min_width">
+              <Form.Item label="最小宽度" name="min_width">
                 <InputNumber min={0} style={{ width: "100%" }} />
               </Form.Item>
-              <Form.Item label="Min height" name="min_height">
+              <Form.Item label="最小高度" name="min_height">
                 <InputNumber min={0} style={{ width: "100%" }} />
               </Form.Item>
-              <Form.Item label="Min pixels" name="min_pixels">
+              <Form.Item label="最小像素" name="min_pixels">
                 <InputNumber min={0} style={{ width: "100%" }} />
               </Form.Item>
 
-              <Form.Item label="Included tags (use |)" name="included_tags">
-                <Input placeholder="tag1|tag2" />
+              <Form.Item label="包含标签（用 | 分隔）" name="included_tags">
+                <Input placeholder="标签1|标签2" />
               </Form.Item>
-              <Form.Item label="Excluded tags (use |)" name="excluded_tags">
-                <Input placeholder="tag1|tag2" />
+              <Form.Item label="排除标签（用 | 分隔）" name="excluded_tags">
+                <Input placeholder="标签1|标签2" />
               </Form.Item>
 
-              <Form.Item label="User ID" name="user_id">
+              <Form.Item label="作者ID" name="user_id">
                 <InputNumber min={1} style={{ width: "100%" }} />
               </Form.Item>
-              <Form.Item label="Illust ID" name="illust_id">
+              <Form.Item label="作品ID" name="illust_id">
                 <InputNumber min={1} style={{ width: "100%" }} />
               </Form.Item>
 
-              <Form.Item label="AI type" name="ai_type">
+              <Form.Item label="AI 类型" name="ai_type">
                 <Select
                   options={[
-                    { value: "any", label: "any" },
+                    { value: "any", label: "不限" },
                     { value: "0", label: "0" },
                     { value: "1", label: "1" },
                   ]}
                 />
               </Form.Item>
 
-              <Form.Item label="Created from (ISO)" name="created_from">
+              <Form.Item label="创建时间起点（ISO）" name="created_from">
                 <Input placeholder="2024-01-01T00:00:00Z" />
               </Form.Item>
-              <Form.Item label="Created to (ISO)" name="created_to">
+              <Form.Item label="创建时间终点（ISO）" name="created_to">
                 <Input placeholder="2024-12-31T23:59:59Z" />
               </Form.Item>
 
               <Button type="primary" htmlType="submit" loading={m.isPending} style={{ width: "100%" }}>
-                Run
+                开始请求
               </Button>
             </Form>
           </Card>
         </Col>
 
         <Col xs={24} lg={10}>
-          <Card title="Result">
+          <Card title="返回结果">
             {m.isPending ? (
               <Skeleton active />
             ) : m.isError ? (
               <Alert
                 type="error"
                 showIcon
-                message={m.error instanceof Error ? m.error.message : "Failed to run"}
-                description={requestIdFromError(m.error) ? `request_id: ${requestIdFromError(m.error)}` : ""}
+                message={m.error instanceof Error ? m.error.message : "请求失败"}
+                description={requestIdFromError(m.error) ? `请求ID: ${requestIdFromError(m.error)}` : ""}
               />
             ) : m.isSuccess ? (
               <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-                <Typography.Text type="secondary">request_id: {m.data.request_id || "-"}</Typography.Text>
-                <Typography.Text type="secondary">url: {m.data.url}</Typography.Text>
+                <Typography.Text type="secondary">请求ID: {m.data.request_id || "-"}</Typography.Text>
+                <Typography.Text type="secondary">请求链接: {m.data.url}</Typography.Text>
 
                 {m.data.kind === "json" ? (
                   <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
@@ -362,13 +362,13 @@ export function PlaygroundPage() {
                   </pre>
                 ) : m.data.kind === "image" ? (
                   <>
-                    <img src={m.data.src} alt="random" style={{ maxWidth: "100%", borderRadius: 6 }} />
+                    <img src={m.data.src} alt="随机图片" style={{ maxWidth: "100%", borderRadius: 6 }} />
                     <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{JSON.stringify(m.data.headers, null, 2)}</pre>
                   </>
                 ) : (
                   <>
                     <Typography.Text>
-                      Location: {m.data.location ? m.data.location : "(not available)"}
+                      跳转地址: {m.data.location ? m.data.location : "（未提供）"}
                     </Typography.Text>
                     {m.data.note ? <Alert type="info" showIcon message={m.data.note} /> : null}
                   </>
@@ -378,26 +378,26 @@ export function PlaygroundPage() {
               <Alert
                 type="info"
                 showIcon
-                message="Ready"
-                description="Pick filters and click Run to sample /random."
+                message="就绪"
+                description="设置筛选条件后，点击“开始请求”即可测试 /random。"
               />
             )}
           </Card>
         </Col>
 
         <Col xs={24} lg={6}>
-          <Card title="Tools">
+          <Card title="快捷工具">
             <Space direction="vertical" style={{ width: "100%" }}>
               <Button onClick={onCopyUrl} disabled={!url}>
-                Copy URL
+                复制链接
               </Button>
               <Button onClick={onCopyCurl} disabled={!url}>
-                Copy curl
+                复制命令
               </Button>
               <Button onClick={onOpen} disabled={!url}>
-                Open in new window
+                新窗口打开
               </Button>
-              <Alert type="info" showIcon message="Note" description="Redirect mode may be limited by browser fetch rules." />
+              <Alert type="info" showIcon message="说明" description="重定向模式会受浏览器 fetch 规则限制。" />
             </Space>
           </Card>
         </Col>
@@ -405,3 +405,4 @@ export function PlaygroundPage() {
     </Space>
   );
 }
+

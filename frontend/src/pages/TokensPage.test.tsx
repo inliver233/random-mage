@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+﻿import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -93,9 +93,9 @@ describe("TokensPage", () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText("Tokens")).toBeInTheDocument();
+    expect(await screen.findByText("Pixiv 令牌管理")).toBeInTheDocument();
     expect(await screen.findByText("acc1")).toBeInTheDocument();
-    expect(await screen.findByText(/request_id:\s*req_tokens_1/)).toBeInTheDocument();
+    expect(await screen.findByText(/请求ID:\s*req_tokens_1/)).toBeInTheDocument();
   });
 
   it("creates token", async () => {
@@ -106,15 +106,18 @@ describe("TokensPage", () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText("Tokens")).toBeInTheDocument();
+    expect(await screen.findByText("Pixiv 令牌管理")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /新增\s*Token/ }));
-    const dialog = await screen.findByRole("dialog", { name: /新增\s*Token/ });
-    fireEvent.change(within(dialog).getByPlaceholderText("required"), { target: { value: "rt_test" } });
-    fireEvent.click(within(dialog).getByRole("button", { name: /创\s*建/ }));
+    fireEvent.click(screen.getByRole("button", { name: /新增令牌/ }));
+    const dialog = await screen.findByRole("dialog", { name: /新增令牌/ });
+    fireEvent.change(within(dialog).getByPlaceholderText("必填"), { target: { value: "rt_test" } });
 
-    expect(await screen.findByText(/Token created:\s*2/)).toBeInTheDocument();
-    expect(await screen.findByText(/request_id:\s*req_create/)).toBeInTheDocument();
+    const form = dialog.querySelector("form");
+    expect(form).not.toBeNull();
+    fireEvent.submit(form as HTMLFormElement);
+
+    expect(await screen.findByText(/令牌创建成功：2/)).toBeInTheDocument();
+    expect(await screen.findByText(/请求ID:\s*req_create/)).toBeInTheDocument();
   });
 
   it("tests refresh and resets failures", async () => {
@@ -125,15 +128,15 @@ describe("TokensPage", () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText("Tokens")).toBeInTheDocument();
+    expect(await screen.findByText("Pixiv 令牌管理")).toBeInTheDocument();
 
     fireEvent.click(await screen.findByRole("button", { name: /测试刷新/ }));
-    expect(await screen.findByText(/Token refresh OK/)).toBeInTheDocument();
-    expect(await screen.findByText(/via proxy #10/)).toBeInTheDocument();
-    expect(await screen.findByText(/request_id:\s*req_test_refresh/)).toBeInTheDocument();
+    expect(await screen.findByText(/令牌刷新成功/)).toBeInTheDocument();
+    expect(await screen.findByText(/代理 #10，代理池 #1/)).toBeInTheDocument();
+    expect(await screen.findByText(/请求ID:\s*req_test_refresh/)).toBeInTheDocument();
 
-    fireEvent.click(await screen.findByRole("button", { name: /重置失败退避/ }));
-    expect(await screen.findByText(/Token failures reset:\s*1/)).toBeInTheDocument();
-    expect(await screen.findByText(/request_id:\s*req_reset/)).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: /重置失败计数/ }));
+    expect(await screen.findByText(/已重置失败计数：1/)).toBeInTheDocument();
+    expect(await screen.findByText(/请求ID:\s*req_reset/)).toBeInTheDocument();
   });
 });

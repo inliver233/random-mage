@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+﻿import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -73,8 +73,8 @@ describe("SettingsPage", () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText("Settings")).toBeInTheDocument();
-    expect(await screen.findByText(/request_id:\s*req_settings/)).toBeInTheDocument();
+    expect(await screen.findByText("系统设置")).toBeInTheDocument();
+    expect(await screen.findByText(/请求ID:\s*req_settings/)).toBeInTheDocument();
   });
 
   it("saves settings", async () => {
@@ -85,13 +85,13 @@ describe("SettingsPage", () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText("Settings")).toBeInTheDocument();
-    expect(await screen.findByText(/request_id:\s*req_settings/)).toBeInTheDocument();
+    expect(await screen.findByText("系统设置")).toBeInTheDocument();
+    expect(await screen.findByText(/请求ID:\s*req_settings/)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /保\s*存/ }));
+    fireEvent.click(screen.getByRole("button", { name: /保存设置/ }));
 
-    expect(await screen.findByText("Saved")).toBeInTheDocument();
-    expect(await screen.findByText(/updated:\s*7/)).toBeInTheDocument();
-    expect(await screen.findByText(/request_id:\s*req_save/)).toBeInTheDocument();
+    expect(await screen.findByText("保存成功")).toBeInTheDocument();
+    expect(await screen.findByText(/更新条目数:\s*7/)).toBeInTheDocument();
+    expect(await screen.findByText(/请求ID:\s*req_save/)).toBeInTheDocument();
   });
 });

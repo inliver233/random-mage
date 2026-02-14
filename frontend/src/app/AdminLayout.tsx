@@ -19,12 +19,15 @@ export function AdminLayout() {
           <Button size="small" onClick={() => navigate("/admin")}>
             主页
           </Button>
+          <Button size="small" onClick={() => navigate("/admin/hydration")}>
+            补全管理
+          </Button>
           <Typography.Title
             level={4}
             style={{ margin: 0, lineHeight: "64px", cursor: "pointer" }}
             onClick={() => navigate("/admin")}
           >
-            Random Mage Admin
+            随机图片管理后台
           </Typography.Title>
         </Space>
       </Layout.Header>
@@ -34,3 +37,4 @@ export function AdminLayout() {
     </Layout>
   );
 }
+

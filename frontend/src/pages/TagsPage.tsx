@@ -25,15 +25,15 @@ function requestIdFromError(err: unknown): string | null {
 }
 
 const baseColumns: ColumnsType<TagItem> = [
-  { title: "Name", dataIndex: "name", key: "name" },
-  { title: "Translated", dataIndex: "translated_name", key: "translated_name" },
-  { title: "Count", dataIndex: "count_images", key: "count_images" },
+  { title: "标签", dataIndex: "name", key: "name" },
+  { title: "翻译", dataIndex: "translated_name", key: "translated_name" },
+  { title: "图片数量", dataIndex: "count_images", key: "count_images" },
 ];
 
 export function TagsPage() {
   const navigate = useNavigate();
 
-  const q = useQuery({
+  const query = useQuery({
     queryKey: ["public", "tags", { limit: 50 }],
     queryFn: () => apiJson<TagsListResponse>("/tags?limit=50"),
   });
@@ -41,14 +41,14 @@ export function TagsPage() {
   const columns: ColumnsType<TagItem> = [
     ...baseColumns,
     {
-      title: "Actions",
+      title: "操作",
       key: "actions",
-      render: (_, r) => (
+      render: (_, row) => (
         <Button
           size="small"
-          onClick={() => navigate(`/admin/random?format=image&included_tags=${encodeURIComponent(r.name)}`)}
+          onClick={() => navigate(`/admin/random?format=image&included_tags=${encodeURIComponent(row.name)}`)}
         >
-          从该标签随机一张
+          按此标签随机一张
         </Button>
       ),
     },
@@ -57,34 +57,34 @@ export function TagsPage() {
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
       <Typography.Title level={3} style={{ margin: 0 }}>
-        Tags
+        标签列表
       </Typography.Title>
 
-      {q.isLoading ? (
+      {query.isLoading ? (
         <Skeleton active />
-      ) : q.isError ? (
+      ) : query.isError ? (
         <Alert
           type="error"
           showIcon
-          message="Failed to load tags"
-          description={requestIdFromError(q.error) ? `request_id: ${requestIdFromError(q.error)}` : ""}
+          message="加载标签失败"
+          description={requestIdFromError(query.error) ? `请求ID: ${requestIdFromError(query.error)}` : ""}
         />
-      ) : !q.data ? (
+      ) : !query.data ? (
         <Skeleton active />
-      ) : q.data.items.length === 0 ? (
+      ) : query.data.items.length === 0 ? (
         <Alert
           type="info"
           showIcon
-          message="No tags"
-          description="Import images and run hydration to populate tags."
+          message="暂无标签数据"
+          description="请先导入图片并执行元数据补全。"
         />
       ) : (
         <Card>
-          <Typography.Text type="secondary">request_id: {q.data.request_id}</Typography.Text>
+          <Typography.Text type="secondary">请求ID: {query.data.request_id}</Typography.Text>
           <Table<TagItem>
-            rowKey={(r) => r.name}
+            rowKey={(row) => row.name}
             columns={columns}
-            dataSource={q.data.items}
+            dataSource={query.data.items}
             pagination={false}
             size="small"
             style={{ marginTop: 12 }}
@@ -94,3 +94,4 @@ export function TagsPage() {
     </Space>
   );
 }
+

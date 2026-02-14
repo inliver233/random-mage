@@ -15,6 +15,7 @@ import { TokensPage } from "../pages/TokensPage";
 import { ProxiesPage } from "../pages/ProxiesPage";
 import { BindingsPage } from "../pages/BindingsPage";
 import { JobsPage } from "../pages/JobsPage";
+import { HydrationPage } from "../pages/HydrationPage";
 import { SettingsPage } from "../pages/SettingsPage";
 import { AuditPage } from "../pages/AuditPage";
 import { PlaceholderPage } from "../pages/PlaceholderPage";
@@ -38,11 +39,12 @@ export function App() {
             <Route path="proxies" element={<ProxiesPage />} />
             <Route path="bindings" element={<BindingsPage />} />
             <Route path="jobs" element={<JobsPage />} />
+            <Route path="hydration" element={<HydrationPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="audit" element={<AuditPage />} />
-            <Route path="*" element={<PlaceholderPage title="Not Found" />} />
+            <Route path="*" element={<PlaceholderPage title="页面不存在" />} />
           </Route>
-          <Route path="*" element={<PlaceholderPage title="Not Found" />} />
+          <Route path="*" element={<PlaceholderPage title="页面不存在" />} />
         </Routes>
       </BrowserRouter>
     </ConfigProvider>

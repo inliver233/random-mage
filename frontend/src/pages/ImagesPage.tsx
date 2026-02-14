@@ -32,25 +32,21 @@ function requestIdFromError(err: unknown): string | null {
 }
 
 const columns: ColumnsType<ImageItem> = [
-  { title: "ID", dataIndex: "id", key: "id" },
-  { title: "Illust", dataIndex: "illust_id", key: "illust_id" },
-  { title: "P", dataIndex: "page_index", key: "page_index" },
-  { title: "Ext", dataIndex: "ext", key: "ext" },
-  { title: "W", dataIndex: "width", key: "width" },
-  { title: "H", dataIndex: "height", key: "height" },
+  { title: "图片ID", dataIndex: "id", key: "id" },
+  { title: "作品ID", dataIndex: "illust_id", key: "illust_id" },
+  { title: "页码", dataIndex: "page_index", key: "page_index" },
+  { title: "格式", dataIndex: "ext", key: "ext" },
+  { title: "宽", dataIndex: "width", key: "width" },
+  { title: "高", dataIndex: "height", key: "height" },
   { title: "R18", dataIndex: "x_restrict", key: "x_restrict" },
   { title: "AI", dataIndex: "ai_type", key: "ai_type" },
-  {
-    title: "User",
-    key: "user",
-    render: (_, r) => (r.user?.name ? `${r.user.name}` : ""),
-  },
-  { title: "Title", dataIndex: "title", key: "title" },
-  { title: "Created", dataIndex: "created_at_pixiv", key: "created_at_pixiv" },
+  { title: "作者", key: "user", render: (_, row) => (row.user?.name ? row.user.name : "") },
+  { title: "标题", dataIndex: "title", key: "title" },
+  { title: "Pixiv 发布时间", dataIndex: "created_at_pixiv", key: "created_at_pixiv" },
 ];
 
 export function ImagesPage() {
-  const q = useQuery({
+  const query = useQuery({
     queryKey: ["public", "images", { limit: 50, r18: 2 }],
     queryFn: () => apiJson<ImagesListResponse>("/images?limit=50&r18=2"),
   });
@@ -58,25 +54,25 @@ export function ImagesPage() {
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
       <Typography.Title level={3} style={{ margin: 0 }}>
-        Images
+        图片列表
       </Typography.Title>
 
-      {q.isLoading ? (
+      {query.isLoading ? (
         <Skeleton active />
-      ) : q.isError ? (
+      ) : query.isError ? (
         <Alert
           type="error"
           showIcon
-          message="Failed to load images"
-          description={requestIdFromError(q.error) ? `request_id: ${requestIdFromError(q.error)}` : ""}
+          message="加载图片列表失败"
+          description={requestIdFromError(query.error) ? `请求ID: ${requestIdFromError(query.error)}` : ""}
         />
       ) : (
         <Card>
-          <Typography.Text type="secondary">request_id: {q.data?.request_id}</Typography.Text>
+          <Typography.Text type="secondary">请求ID: {query.data?.request_id}</Typography.Text>
           <Table<ImageItem>
-            rowKey={(r) => r.id}
+            rowKey={(row) => row.id}
             columns={columns}
-            dataSource={q.data?.items || []}
+            dataSource={query.data?.items || []}
             pagination={false}
             size="small"
             style={{ marginTop: 12 }}
@@ -86,3 +82,4 @@ export function ImagesPage() {
     </Space>
   );
 }
+
