@@ -1,4 +1,4 @@
-import { getAdminToken } from "../auth/tokenStorage";
+import { clearAdminToken, getAdminToken } from "../auth/tokenStorage";
 
 export type ApiErrorBody = {
   ok: false;
@@ -63,6 +63,27 @@ export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   const body = data && typeof data === "object" ? (data as ApiErrorBody) : null;
+
+  if (
+    resp.status === 401 &&
+    path.startsWith("/admin/api/") &&
+    !path.startsWith("/admin/api/login")
+  ) {
+    try {
+      clearAdminToken();
+    } catch {
+      // ignore
+    }
+    try {
+      window.dispatchEvent(
+        new CustomEvent("admin:unauthorized", {
+          detail: { path, request_id: body?.request_id ? String(body.request_id) : null },
+        }),
+      );
+    } catch {
+      // ignore
+    }
+  }
   const msg =
     body && typeof body.message === "string" && body.message.trim()
       ? body.message

@@ -1,6 +1,6 @@
 import { Alert, Button, Card, Form, Input, Space, Typography } from "antd";
 import React, { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 
 import { ApiError, apiJson } from "../api/client";
 import { setAdminToken } from "../auth/tokenStorage";
@@ -18,10 +18,22 @@ type LoginResponse = {
 
 export function LoginPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [form] = Form.useForm<LoginFormValues>();
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [requestId, setRequestId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  const searchParams = new URLSearchParams(location.search);
+  const reason = String(searchParams.get("reason") || "").trim();
+  const next = String(searchParams.get("next") || "").trim();
+
+  const reasonMessage =
+    reason === "unauthorized"
+      ? "登录已失效，请重新登录。"
+      : reason === "missing_token"
+        ? "请先登录后再访问管理后台。"
+        : null;
 
   const onFinish = async (values: LoginFormValues) => {
     setLoading(true);
@@ -37,7 +49,9 @@ export function LoginPage() {
       setAdminToken(resp.token);
       setRequestId(resp.request_id);
       form.resetFields(["password"]);
-      navigate("/admin", { replace: true });
+
+      const nextPath = next && next.startsWith("/admin") && !next.startsWith("/admin/login") ? next : "/admin";
+      navigate(nextPath, { replace: true });
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         setErrorMessage(err.message);
@@ -68,6 +82,7 @@ export function LoginPage() {
             管理后台登录
           </Typography.Title>
 
+          {reasonMessage ? <Alert type="info" message={reasonMessage} showIcon /> : null}
           {errorMessage ? <Alert type="error" message={errorMessage} showIcon /> : null}
           {requestId ? <Typography.Text type="secondary">请求ID: {requestId}</Typography.Text> : null}
 
@@ -89,4 +104,3 @@ export function LoginPage() {
     </div>
   );
 }
-
