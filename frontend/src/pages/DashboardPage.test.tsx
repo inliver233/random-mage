@@ -27,6 +27,18 @@ describe("DashboardPage", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
         const url = String(input);
+        if (url.endsWith("/version")) {
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              version: "dev",
+              build_time: "2026-02-15T00:00:00Z",
+              git_commit: "abcdef1",
+              request_id: "req_version",
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
         if (url.endsWith("/admin/api/settings")) {
           return new Response(
             JSON.stringify({
@@ -109,6 +121,7 @@ describe("DashboardPage", () => {
     expect(await screen.findByText("总数: 14")).toBeInTheDocument();
     expect(await screen.findByText("总数: 2")).toBeInTheDocument();
     expect(await screen.findByText("代理节点: 1/1 启用")).toBeInTheDocument();
+    expect(await screen.findByText(/提交:\s*abcdef1/)).toBeInTheDocument();
   });
 
   it("navigates to import", async () => {

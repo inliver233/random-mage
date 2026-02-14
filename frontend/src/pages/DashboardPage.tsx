@@ -36,6 +36,14 @@ type SettingsResponse = {
   request_id: string;
 };
 
+type VersionResponse = {
+  ok: true;
+  version: string;
+  build_time: string;
+  git_commit: string;
+  request_id: string;
+};
+
 type JobsResponse = { ok: true; items: unknown[]; next_cursor: string; request_id: string };
 type CreateHydrationRunResponse = { ok: true; hydration_run_id: string; job_id: string; request_id: string };
 
@@ -79,6 +87,11 @@ export function DashboardPage() {
   const failedJobs = useQuery({
     queryKey: ["admin", "jobs", "failed"],
     queryFn: () => apiJson<JobsResponse>("/admin/api/jobs?status=failed&limit=10"),
+  });
+
+  const version = useQuery({
+    queryKey: ["public", "version"],
+    queryFn: () => apiJson<VersionResponse>("/version"),
   });
 
   const proxyEnabled = settings.data?.settings.proxy.enabled ?? false;
@@ -245,7 +258,31 @@ export function DashboardPage() {
       </Row>
 
       <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
-        <Col span={24}>
+        <Col xs={24} md={12} xl={8}>
+          <Card title="版本信息">
+            {version.isLoading ? (
+              <Skeleton active />
+            ) : version.isError ? (
+              <Alert
+                type="error"
+                showIcon
+                message="加载版本信息失败"
+                description={requestIdFromError(version.error) ? `请求ID: ${requestIdFromError(version.error)}` : ""}
+              />
+            ) : !version.data ? (
+              <Skeleton active />
+            ) : (
+              <Space direction="vertical">
+                <Typography.Text>版本: {version.data.version || "（未知）"}</Typography.Text>
+                <Typography.Text>构建时间: {version.data.build_time || "（未设置）"}</Typography.Text>
+                <Typography.Text>提交: {version.data.git_commit || "（未设置）"}</Typography.Text>
+                <Typography.Text type="secondary">请求ID: {version.data.request_id}</Typography.Text>
+              </Space>
+            )}
+          </Card>
+        </Col>
+
+        <Col xs={24} md={12} xl={16}>
           <Card title="失败任务（最近10条）">
             {failedJobs.isLoading ? (
               <Skeleton active />
