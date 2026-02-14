@@ -70,6 +70,8 @@ Query：
 - `redirect`: `0|1`（默认 0；为 1 时返回 302 Location `/i/{id}.{ext}`）
 - `attempts`: `1..10`（默认 3）
 - `seed`: string（可选；可复现随机）
+- `strategy`: `quality|random`（默认 quality；quality 会“偏向高质量”）
+- `quality_samples`: `1..20`（默认 5；quality 策略下抽样候选数量）
 
 筛选：
 - `r18`: `0|1|2`（默认 0）
@@ -107,6 +109,9 @@ Query：
       "height": 3508,
       "x_restrict": 0,
       "ai_type": 0,
+      "bookmark_count": 123,
+      "view_count": 4567,
+      "comment_count": 89,
       "user": { "id": "999", "name": "author" },
       "title": "title",
       "created_at_pixiv": "2024-05-05T00:47:58Z"
@@ -120,7 +125,9 @@ Query：
     },
     "debug": {
       "attempts_used": 1,
-      "picked_by": "random_key"
+      "picked_by": "quality",
+      "quality_samples": 5,
+      "quality_score": 12.34
     }
   }
 }
@@ -402,4 +409,3 @@ Body：`{ "override_proxy_id": 10, "ttl_ms": 1200000, "reason": "manual_override
 - `PROXY_REQUIRED`（fail-closed 且无可用 proxy）
 - `PROXY_AUTH_FAILED`
 - `PROXY_CONNECT_FAILED`
-

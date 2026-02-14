@@ -918,6 +918,8 @@ curl -I "http://127.0.0.1:3000/12345678-0.jpg"
 - `redirect`: `0`（默认）| `1`（返回 302，`Location` 指向稳定图片 URL，例如 `/i/:id.:ext`）
 - `attempts`: `1..10`（默认实现会 clamp；用于内部失败换图次数）
 - `seed`: string（同一 seed 下结果可复现，用于调试/回归）
+- `strategy`: `quality`（默认）| `random`（quality 会更偏向高收藏/高清图）
+- `quality_samples`: number（quality 策略下抽样候选数量，默认 5）
 
 强筛选（实现后生效）：
 - `r18`: `0|1|2`（默认 `0`）
@@ -925,6 +927,10 @@ curl -I "http://127.0.0.1:3000/12345678-0.jpg"
 - `min_width`, `min_height`, `min_pixels`: number
 - `included_tags`, `excluded_tags`: string（支持多值；具体语义以 OpenAPI/实现为准）
 - `user_id`, `illust_id`: number（用于作者/作品筛选）
+
+质量策略说明（默认）：
+- `strategy=quality` 会先随机抽取 `quality_samples` 张候选，再基于“收藏数（主）+ 分辨率/浏览/评论（辅）”的质量评分取最优。
+- 若热度字段缺失较多，可先在管理后台创建补全任务提升覆盖率，再启用更高的 `quality_samples`。
 
 示例（≥5 条）：
 
