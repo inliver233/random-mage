@@ -6,6 +6,7 @@ from app.api.admin.auth import router as auth_router
 from app.api.admin.api_keys import router as api_keys_router
 from app.api.admin.bindings import router as bindings_router
 from app.api.admin.hydration_runs import router as hydration_runs_router
+from app.api.admin.images import router as images_router
 from app.api.admin.imports import router as imports_router
 from app.api.admin.jobs import router as jobs_router
 from app.api.admin.maintenance import router as maintenance_router
@@ -20,6 +21,7 @@ router.include_router(auth_router)
 router.include_router(api_keys_router)
 router.include_router(bindings_router)
 router.include_router(hydration_runs_router)
+router.include_router(images_router)
 router.include_router(imports_router)
 router.include_router(jobs_router)
 router.include_router(maintenance_router)

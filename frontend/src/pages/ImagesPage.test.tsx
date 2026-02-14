@@ -15,7 +15,7 @@ describe("ImagesPage", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
-        if (url.endsWith("/images?limit=50&r18=2")) {
+        if (url.endsWith("/admin/api/images?limit=50")) {
           return new Response(
             JSON.stringify({
               ok: true,
@@ -25,13 +25,19 @@ describe("ImagesPage", () => {
                   illust_id: "111",
                   page_index: 0,
                   ext: "jpg",
+                  status: 1,
                   width: 100,
                   height: 200,
+                  orientation: 1,
                   x_restrict: 0,
                   ai_type: 1,
                   user: { id: "9", name: "u" },
                   title: "t",
                   created_at_pixiv: "2020-01-01T00:00:00Z",
+                  original_url: "https://example.com/1.jpg",
+                  proxy_path: "/i/1.jpg",
+                  tag_count: 1,
+                  missing: [],
                 },
               ],
               next_cursor: "",
@@ -56,7 +62,7 @@ describe("ImagesPage", () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText("图片列表")).toBeInTheDocument();
+    expect(await screen.findByText("图片管理")).toBeInTheDocument();
     expect(await screen.findByText("111")).toBeInTheDocument();
     expect(await screen.findByText(/请求ID:\s*req_images/)).toBeInTheDocument();
   });
