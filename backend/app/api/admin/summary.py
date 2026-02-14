@@ -89,6 +89,14 @@ WHERE status=1
                     )
                 ).scalar_one()
             )
+            missing_popularity = int(
+                (
+                    await conn.exec_driver_sql(
+                        "SELECT COUNT(*) FROM images "
+                        "WHERE status=1 AND (bookmark_count IS NULL OR view_count IS NULL OR comment_count IS NULL);"
+                    )
+                ).scalar_one()
+            )
 
             tokens_total = int((await conn.exec_driver_sql("SELECT COUNT(*) FROM pixiv_tokens;")).scalar_one())
             tokens_enabled = int(
@@ -129,6 +137,7 @@ WHERE status=1
                     "user": missing_user,
                     "title": missing_title,
                     "created_at": missing_created_at,
+                    "popularity": missing_popularity,
                 },
             },
             "tokens": {"total": tokens_total, "enabled": tokens_enabled},

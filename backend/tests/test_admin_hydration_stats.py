@@ -54,6 +54,9 @@ def test_admin_summary_includes_hydration_missing_counts(tmp_path: Path, monkeyp
                 user_name="u",
                 title="t",
                 created_at_pixiv="2026-01-01T00:00:00Z",
+                bookmark_count=1,
+                view_count=2,
+                comment_count=3,
             )
             session.add_all([img1, img2])
             await session.flush()
@@ -88,4 +91,4 @@ def test_admin_summary_includes_hydration_missing_counts(tmp_path: Path, monkeyp
         assert missing["user"] == 1
         assert missing["title"] == 1
         assert missing["created_at"] == 1
-
+        assert missing["popularity"] == 1

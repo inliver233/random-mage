@@ -63,6 +63,9 @@ def test_admin_images_list_missing_filters_and_cursor(tmp_path: Path, monkeypatc
                 user_name="u",
                 title="t",
                 created_at_pixiv="2026-01-01T00:00:00Z",
+                bookmark_count=1,
+                view_count=2,
+                comment_count=3,
             )
             session.add_all([img1, img2])
             await session.flush()
@@ -104,6 +107,16 @@ def test_admin_images_list_missing_filters_and_cursor(tmp_path: Path, monkeypatc
         assert r2.status_code == 200
         assert int(r2.json()["items"][0]["id"]) == ids["img1"]
 
+        r2b = client.get(
+            "/admin/api/images",
+            params={"missing": "popularity"},
+            headers={"Authorization": f"Bearer {token}", "X-Request-Id": "req_test"},
+        )
+        assert r2b.status_code == 200
+        b2b = r2b.json()
+        assert len(b2b["items"]) == 1
+        assert int(b2b["items"][0]["id"]) == ids["img1"]
+
         r3 = client.get(
             "/admin/api/images",
             params={"limit": 1},
@@ -131,4 +144,3 @@ def test_admin_images_list_missing_filters_and_cursor(tmp_path: Path, monkeypatc
         )
         assert bad.status_code == 400
         assert bad.json()["ok"] is False
-

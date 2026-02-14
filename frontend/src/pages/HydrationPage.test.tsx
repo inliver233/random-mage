@@ -27,7 +27,7 @@ describe("HydrationPage", () => {
             counts: {
               hydration: {
                 enabled_images_total: 10,
-                missing: { tags: 7, geometry: 5, r18: 10, ai: 3, user: 2, title: 1, created_at: 4 },
+                missing: { tags: 7, geometry: 5, r18: 10, ai: 3, user: 2, title: 1, created_at: 4, popularity: 6 },
               },
               jobs: { counts: { pending: 2, running: 1, failed: 0 } },
               worker: { last_seen_at: "2026-02-14T00:00:00Z" },

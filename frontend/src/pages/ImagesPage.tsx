@@ -17,6 +17,9 @@ type ImageItem = {
   orientation: number | null;
   x_restrict: number | null;
   ai_type: number | null;
+  bookmark_count: number | null;
+  view_count: number | null;
+  comment_count: number | null;
   user: { id: string | null; name: string | null };
   title: string | null;
   created_at_pixiv: string | null;
@@ -54,6 +57,7 @@ const MISSING_LABELS: Record<string, string> = {
   user: "作者",
   title: "标题",
   created_at: "时间",
+  popularity: "热度",
 };
 
 export function ImagesPage() {
@@ -119,6 +123,9 @@ export function ImagesPage() {
       },
       { title: "R18", dataIndex: "x_restrict", key: "x_restrict", width: 70, render: (v) => (v == null ? "-" : String(v)) },
       { title: "AI", dataIndex: "ai_type", key: "ai_type", width: 60, render: (v) => (v == null ? "-" : String(v)) },
+      { title: "收藏", dataIndex: "bookmark_count", key: "bookmark_count", width: 90, render: (v) => (v == null ? "-" : String(v)) },
+      { title: "浏览", dataIndex: "view_count", key: "view_count", width: 90, render: (v) => (v == null ? "-" : String(v)) },
+      { title: "评论", dataIndex: "comment_count", key: "comment_count", width: 90, render: (v) => (v == null ? "-" : String(v)) },
       { title: "标签数", dataIndex: "tag_count", key: "tag_count", width: 80 },
       {
         title: "缺失",
@@ -181,6 +188,7 @@ export function ImagesPage() {
             { value: "user", label: "缺作者信息" },
             { value: "title", label: "缺标题" },
             { value: "created_at", label: "缺发布时间" },
+            { value: "popularity", label: "缺热度信息" },
           ]}
           style={{ minWidth: 420 }}
         />
@@ -215,7 +223,7 @@ export function ImagesPage() {
             dataSource={query.data.items}
             pagination={false}
             size="small"
-            scroll={{ x: 1700 }}
+            scroll={{ x: 2000 }}
             style={{ marginTop: 12 }}
           />
         </Card>

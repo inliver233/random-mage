@@ -223,7 +223,7 @@ def build_hydrate_metadata_handler(
             return default
 
     def _missing_set_from_criteria(criteria: dict[str, Any]) -> set[str]:
-        default = {"tags", "geometry", "r18", "ai", "user", "title", "created_at"}
+        default = {"tags", "geometry", "r18", "ai", "user", "title", "created_at", "popularity"}
         raw = criteria.get("missing")
         if not isinstance(raw, list):
             return set(default)
@@ -256,6 +256,8 @@ def build_hydrate_metadata_handler(
             parts.append("(created_at_pixiv IS NULL)")
         if "tags" in missing:
             parts.append("NOT EXISTS (SELECT 1 FROM image_tags it WHERE it.image_id = images.id)")
+        if "popularity" in missing:
+            parts.append("(bookmark_count IS NULL OR view_count IS NULL OR comment_count IS NULL)")
 
         return "(" + " OR ".join(parts) + ")" if parts else "(1=1)"
 

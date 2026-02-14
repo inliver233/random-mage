@@ -113,6 +113,7 @@ const MISSING_OPTIONS = [
   { label: "作者信息", value: "user" },
   { label: "标题", value: "title" },
   { label: "发布时间", value: "created_at" },
+  { label: "热度（收藏/浏览/评论）", value: "popularity" },
 ];
 
 function requestIdFromError(err: unknown): string | null {

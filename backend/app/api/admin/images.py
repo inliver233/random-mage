@@ -14,7 +14,7 @@ from app.db.session import create_sessionmaker
 
 router = APIRouter()
 
-_ALLOWED_MISSING = {"tags", "geometry", "r18", "ai", "user", "title", "created_at"}
+_ALLOWED_MISSING = {"tags", "geometry", "r18", "ai", "user", "title", "created_at", "popularity"}
 
 
 def _parse_missing(values: list[str] | None) -> list[str]:
@@ -92,6 +92,10 @@ async def list_admin_images(
             stmt = stmt.where((Image.title.is_(None)) | (sa.func.trim(Image.title) == ""))
         elif key == "created_at":
             stmt = stmt.where((Image.created_at_pixiv.is_(None)) | (sa.func.trim(Image.created_at_pixiv) == ""))
+        elif key == "popularity":
+            stmt = stmt.where(
+                (Image.bookmark_count.is_(None)) | (Image.view_count.is_(None)) | (Image.comment_count.is_(None))
+            )
 
     async with Session() as session:
         rows = (await session.execute(stmt)).all()
@@ -117,6 +121,8 @@ async def list_admin_images(
             missing_list.append("title")
         if img.created_at_pixiv is None or not str(img.created_at_pixiv).strip():
             missing_list.append("created_at")
+        if img.bookmark_count is None or img.view_count is None or img.comment_count is None:
+            missing_list.append("popularity")
 
         items.append(
             {
@@ -130,6 +136,9 @@ async def list_admin_images(
                 "orientation": img.orientation,
                 "x_restrict": img.x_restrict,
                 "ai_type": img.ai_type,
+                "bookmark_count": img.bookmark_count,
+                "view_count": img.view_count,
+                "comment_count": img.comment_count,
                 "user": {
                     "id": str(img.user_id) if img.user_id is not None else None,
                     "name": img.user_name,
@@ -149,4 +158,3 @@ async def list_admin_images(
         "next_cursor": str(next_cursor) if next_cursor is not None else "",
         "request_id": rid,
     }
-
