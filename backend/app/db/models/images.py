@@ -47,6 +47,10 @@ class Image(Base):
     title: Mapped[str | None] = mapped_column(sa.Text(), nullable=True)
     created_at_pixiv: Mapped[str | None] = mapped_column(sa.Text(), nullable=True)
 
+    bookmark_count: Mapped[int | None] = mapped_column(sa.Integer(), nullable=True)
+    view_count: Mapped[int | None] = mapped_column(sa.Integer(), nullable=True)
+    comment_count: Mapped[int | None] = mapped_column(sa.Integer(), nullable=True)
+
     status: Mapped[int] = mapped_column(sa.Integer(), nullable=False, server_default=sa.text("1"))
     fail_count: Mapped[int] = mapped_column(sa.Integer(), nullable=False, server_default=sa.text("0"))
     last_fail_at: Mapped[str | None] = mapped_column(sa.Text(), nullable=True)
@@ -70,4 +74,3 @@ class Image(Base):
         nullable=False,
         server_default=sa.text("(strftime('%Y-%m-%dT%H:%M:%fZ','now'))"),
     )
-

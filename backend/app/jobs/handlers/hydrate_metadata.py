@@ -649,6 +649,9 @@ LIMIT 1;
         user_name: str | None,
         title: str | None,
         created_at_pixiv: str | None,
+        bookmark_count: int | None,
+        view_count: int | None,
+        comment_count: int | None,
         tags: list[tuple[str, str | None]],
         source_import_id: int | None,
     ) -> None:
@@ -703,6 +706,9 @@ LIMIT 1;
                         user_name=user_name,
                         title=title,
                         created_at_pixiv=created_at_pixiv,
+                        bookmark_count=bookmark_count,
+                        view_count=view_count,
+                        comment_count=comment_count,
                         created_import_id=int(source_import_id) if source_import_id else None,
                     )
                     stmt = stmt.on_conflict_do_update(
@@ -720,6 +726,9 @@ LIMIT 1;
                             "user_name": stmt.excluded.user_name,
                             "title": stmt.excluded.title,
                             "created_at_pixiv": stmt.excluded.created_at_pixiv,
+                            "bookmark_count": stmt.excluded.bookmark_count,
+                            "view_count": stmt.excluded.view_count,
+                            "comment_count": stmt.excluded.comment_count,
                             "updated_at": now_expr,
                         },
                     ).returning(Image.id)
@@ -880,6 +889,18 @@ LIMIT 1;
             except Exception:
                 created_at_pixiv = None
 
+            bookmark_count = _as_int(illust.get("total_bookmarks"))
+            if bookmark_count is None:
+                bookmark_count = _as_int(illust.get("bookmark_count"))
+
+            view_count = _as_int(illust.get("total_view"))
+            if view_count is None:
+                view_count = _as_int(illust.get("view_count"))
+
+            comment_count = _as_int(illust.get("total_comments"))
+            if comment_count is None:
+                comment_count = _as_int(illust.get("comment_count"))
+
             tags = _extract_tags(illust)
 
             await _persist(
@@ -895,6 +916,9 @@ LIMIT 1;
                 user_name=user_name,
                 title=title,
                 created_at_pixiv=created_at_pixiv,
+                bookmark_count=bookmark_count,
+                view_count=view_count,
+                comment_count=comment_count,
                 tags=tags,
                 source_import_id=source_import_id,
             )

@@ -158,6 +158,9 @@ async def list_images(
             "height": img.height,
             "x_restrict": img.x_restrict,
             "ai_type": img.ai_type,
+            "bookmark_count": getattr(img, "bookmark_count", None),
+            "view_count": getattr(img, "view_count", None),
+            "comment_count": getattr(img, "comment_count", None),
             "user": {
                 "id": str(img.user_id) if img.user_id is not None else None,
                 "name": img.user_name,
@@ -215,6 +218,9 @@ async def get_image(
                     "height": image.height,
                     "x_restrict": image.x_restrict,
                     "ai_type": image.ai_type,
+                    "bookmark_count": getattr(image, "bookmark_count", None),
+                    "view_count": getattr(image, "view_count", None),
+                    "comment_count": getattr(image, "comment_count", None),
                     "user": {
                         "id": str(image.user_id) if image.user_id is not None else None,
                         "name": image.user_name,
