@@ -9,6 +9,8 @@ type PlaygroundFormValues = {
   format: "image" | "json" | "redirect";
   attempts: number;
   seed: string;
+  strategy: "default" | "quality" | "random";
+  quality_samples: number | null;
   r18: 0 | 1 | 2;
   r18_strict: boolean;
   orientation: "any" | "portrait" | "landscape" | "square";
@@ -45,6 +47,9 @@ function buildRandomUrl(values: PlaygroundFormValues): string {
 
   sp.set("attempts", String(values.attempts));
   if (values.seed.trim()) sp.set("seed", values.seed.trim());
+
+  if (values.strategy !== "default") sp.set("strategy", values.strategy);
+  if (values.strategy === "quality" && values.quality_samples != null) sp.set("quality_samples", String(values.quality_samples));
 
   sp.set("r18", String(values.r18));
   sp.set("r18_strict", values.r18_strict ? "1" : "0");
@@ -233,6 +238,8 @@ export function PlaygroundPage() {
                 format: "json",
                 attempts: 3,
                 seed: "",
+                strategy: "default",
+                quality_samples: 5,
                 r18: 0,
                 r18_strict: true,
                 orientation: "any",
@@ -265,6 +272,24 @@ export function PlaygroundPage() {
 
               <Form.Item label="随机种子" name="seed">
                 <Input placeholder="可选" />
+              </Form.Item>
+
+              <Form.Item label="随机策略" name="strategy">
+                <Select
+                  options={[
+                    { value: "default", label: "使用服务端默认" },
+                    { value: "quality", label: "质量优先（更偏向高收藏/高清）" },
+                    { value: "random", label: "纯随机（random_key）" },
+                  ]}
+                />
+              </Form.Item>
+
+              <Form.Item noStyle shouldUpdate={(prev, next) => prev.strategy !== next.strategy}>
+                {({ getFieldValue }) => (
+                  <Form.Item label="质量抽样数量（quality）" name="quality_samples">
+                    <InputNumber min={1} max={20} style={{ width: "100%" }} disabled={getFieldValue("strategy") !== "quality"} />
+                  </Form.Item>
+                )}
               </Form.Item>
 
               <Form.Item label="R18" name="r18">

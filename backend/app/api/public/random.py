@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import random
 import os
+import math
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -25,6 +26,36 @@ router = APIRouter()
 _MAX_TAG_FILTERS = 50
 
 
+def _as_nonneg_int(value: Any) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, bool):
+        return 0
+    try:
+        i = int(value)
+    except Exception:
+        return 0
+    return i if i > 0 else 0
+
+
+def _quality_score(image: Any) -> float:
+    bookmark_count = _as_nonneg_int(getattr(image, "bookmark_count", None))
+    view_count = _as_nonneg_int(getattr(image, "view_count", None))
+    comment_count = _as_nonneg_int(getattr(image, "comment_count", None))
+
+    width = _as_nonneg_int(getattr(image, "width", None))
+    height = _as_nonneg_int(getattr(image, "height", None))
+    pixels = width * height if width > 0 and height > 0 else 0
+
+    score = (
+        4.0 * math.log1p(bookmark_count)
+        + 1.0 * math.log1p(view_count)
+        + 2.0 * math.log1p(comment_count)
+        + 1.0 * math.log1p(float(pixels) / 1_000_000.0)
+    )
+    return float(score)
+
+
 @router.get("/random")
 async def random_image(
     request: Request,
@@ -32,6 +63,8 @@ async def random_image(
     redirect: int = 0,
     attempts: int = 3,
     seed: str | None = None,
+    strategy: str | None = None,
+    quality_samples: int | None = None,
     r18: int = 0,
     r18_strict: int = 1,
     ai_type: str = "any",
@@ -205,6 +238,65 @@ async def random_image(
 
     rng = random.Random(seed_norm) if seed_norm else random
 
+    strategy_norm = (strategy or "quality").strip().lower() or "quality"
+    if strategy_norm not in {"quality", "random"}:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported strategy", status_code=400)
+
+    quality_samples_i = 5
+    if quality_samples is not None:
+        try:
+            quality_samples_i = int(quality_samples)
+        except Exception as exc:
+            raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported quality_samples", status_code=400) from exc
+    if quality_samples_i < 1 or quality_samples_i > 20:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported quality_samples", status_code=400)
+
+    async def _pick_with_strategy(
+        *,
+        session: Any,
+        exclude_image_ids: list[int] | None = None,
+    ) -> tuple[Any, dict[str, Any]] | tuple[None, dict[str, Any]]:
+        if strategy_norm == "random":
+            image = await pick_random_image(session, r=rng.random(), exclude_image_ids=exclude_image_ids, **pick_kwargs)
+            if image is None:
+                return None, {"attempts_used": 1, "picked_by": "random_key"}
+            return image, {"attempts_used": 1, "picked_by": "random_key"}
+
+        exclude_set: set[int] = set(int(x) for x in exclude_image_ids or [])
+        sampled = 0
+        best_image: Any | None = None
+        best_score = float("-inf")
+
+        for _ in range(int(quality_samples_i)):
+            image = await pick_random_image(
+                session,
+                r=rng.random(),
+                exclude_image_ids=list(exclude_set),
+                **pick_kwargs,
+            )
+            if image is None:
+                break
+            exclude_set.add(int(image.id))
+            sampled += 1
+            score = _quality_score(image)
+            if best_image is None or score > best_score:
+                best_image = image
+                best_score = float(score)
+
+        if best_image is None:
+            return None, {"attempts_used": 1, "picked_by": "quality", "quality_samples": int(quality_samples_i), "candidates_sampled": sampled}
+
+        return (
+            best_image,
+            {
+                "attempts_used": 1,
+                "picked_by": "quality",
+                "quality_samples": int(quality_samples_i),
+                "candidates_sampled": sampled,
+                "quality_score": float(best_score),
+            },
+        )
+
     def _needs_opportunistic_hydrate(image: Any) -> bool:
         return (
             getattr(image, "width", None) is None
@@ -212,12 +304,16 @@ async def random_image(
             or getattr(image, "x_restrict", None) is None
             or getattr(image, "ai_type", None) is None
             or getattr(image, "user_id", None) is None
+            or getattr(image, "bookmark_count", None) is None
+            or getattr(image, "view_count", None) is None
+            or getattr(image, "comment_count", None) is None
         )
 
     if format in {"json", "simple_json"} or (format == "image" and redirect == 1):
         tags: list[str] = []
+        debug: dict[str, Any] = {}
         async with Session() as session:
-            image = await pick_random_image(session, r=rng.random(), **pick_kwargs)
+            image, debug = await _pick_with_strategy(session=session)
             if image is None:
                 raise _no_match_error()
             if format == "json":
@@ -270,6 +366,9 @@ async def random_image(
                         "height": image.height,
                         "x_restrict": image.x_restrict,
                         "ai_type": image.ai_type,
+                        "bookmark_count": getattr(image, "bookmark_count", None),
+                        "view_count": getattr(image, "view_count", None),
+                        "comment_count": getattr(image, "comment_count", None),
                     },
                     "urls": {
                         "proxy": f"/i/{image.id}.{image.ext}",
@@ -277,8 +376,7 @@ async def random_image(
                         "imgproxy": imgproxy_url,
                     },
                     "debug": {
-                        "attempts_used": 1,
-                        "picked_by": "random_key",
+                        **debug,
                     },
                 },
             }
@@ -297,6 +395,9 @@ async def random_image(
                     "height": image.height,
                     "x_restrict": image.x_restrict,
                     "ai_type": image.ai_type,
+                    "bookmark_count": getattr(image, "bookmark_count", None),
+                    "view_count": getattr(image, "view_count", None),
+                    "comment_count": getattr(image, "comment_count", None),
                     "user": {
                         "id": str(image.user_id) if image.user_id is not None else None,
                         "name": image.user_name,
@@ -313,8 +414,7 @@ async def random_image(
                     "legacy_multi": f"/{image.illust_id}-{image.page_index + 1}.{image.ext}",
                 },
                 "debug": {
-                    "attempts_used": 1,
-                    "picked_by": "random_key",
+                    **debug,
                 },
             },
         }
@@ -326,12 +426,7 @@ async def random_image(
 
     for _ in range(attempts_i):
         async with Session() as session:
-            image = await pick_random_image(
-                session,
-                r=rng.random(),
-                exclude_image_ids=list(tried_ids),
-                **pick_kwargs,
-            )
+            image, _debug = await _pick_with_strategy(session=session, exclude_image_ids=list(tried_ids))
             if image is None:
                 break
             image_id = int(image.id)
