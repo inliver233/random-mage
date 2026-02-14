@@ -25,8 +25,12 @@ type SettingsFormValues = {
   random_default_attempts: number;
   random_default_r18_strict: boolean;
   random_fail_cooldown_ms: number;
+  random_strategy: "quality" | "random";
+  random_quality_samples: number;
   security_hide_origin_url_in_public_json: boolean;
 };
+
+const RANDOM_STRATEGY_VALUES = new Set<SettingsFormValues["random_strategy"]>(["quality", "random"]);
 
 function requestIdFromError(err: unknown): string | null {
   if (!(err instanceof ApiError)) return null;
@@ -54,6 +58,14 @@ function asInt(value: unknown, fallback: number): number {
   if (typeof value === "string") {
     const parsed = Number.parseInt(value.trim(), 10);
     if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+}
+
+function asLowerEnum<T extends string>(value: unknown, allowed: Set<T>, fallback: T): T {
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (allowed.has(normalized as T)) return normalized as T;
   }
   return fallback;
 }
@@ -104,6 +116,8 @@ export function SettingsPage() {
       random_default_attempts: asInt(random.default_attempts, 3),
       random_default_r18_strict: asBool(random.default_r18_strict, true),
       random_fail_cooldown_ms: asInt(random.fail_cooldown_ms, 600_000),
+      random_strategy: asLowerEnum(random.strategy, RANDOM_STRATEGY_VALUES, "quality"),
+      random_quality_samples: asInt(random.quality_samples, 5),
       security_hide_origin_url_in_public_json: asBool(security.hide_origin_url_in_public_json, true),
     });
   }, [form, query.data]);
@@ -125,6 +139,8 @@ export function SettingsPage() {
               default_attempts: values.random_default_attempts,
               default_r18_strict: values.random_default_r18_strict,
               fail_cooldown_ms: values.random_fail_cooldown_ms,
+              strategy: values.random_strategy,
+              quality_samples: values.random_quality_samples,
             },
             security: { hide_origin_url_in_public_json: values.security_hide_origin_url_in_public_json },
           },
@@ -225,6 +241,18 @@ export function SettingsPage() {
             </Form.Item>
             <Form.Item label="失败冷却时间（毫秒）" name="random_fail_cooldown_ms">
               <InputNumber min={0} max={10_000_000} style={{ width: 240 }} />
+            </Form.Item>
+            <Form.Item label="默认随机策略" name="random_strategy">
+              <Select
+                options={[
+                  { value: "quality", label: "质量优先（更偏向高收藏/高清）" },
+                  { value: "random", label: "纯随机（random_key）" },
+                ]}
+                style={{ maxWidth: 360 }}
+              />
+            </Form.Item>
+            <Form.Item label="默认质量抽样数量（quality）" name="random_quality_samples" extra="仅在“质量优先”策略下生效。">
+              <InputNumber min={1} max={20} style={{ width: 240 }} />
             </Form.Item>
 
             <Typography.Title level={5} style={{ marginTop: 12 }}>

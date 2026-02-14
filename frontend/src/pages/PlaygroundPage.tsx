@@ -239,7 +239,7 @@ export function PlaygroundPage() {
                 attempts: 3,
                 seed: "",
                 strategy: "default",
-                quality_samples: 5,
+                quality_samples: null,
                 r18: 0,
                 r18_strict: true,
                 orientation: "any",
@@ -286,8 +286,14 @@ export function PlaygroundPage() {
 
               <Form.Item noStyle shouldUpdate={(prev, next) => prev.strategy !== next.strategy}>
                 {({ getFieldValue }) => (
-                  <Form.Item label="质量抽样数量（quality）" name="quality_samples">
-                    <InputNumber min={1} max={20} style={{ width: "100%" }} disabled={getFieldValue("strategy") !== "quality"} />
+                  <Form.Item label="质量抽样数量（quality，留空=服务端默认）" name="quality_samples">
+                    <InputNumber
+                      min={1}
+                      max={20}
+                      placeholder="留空使用服务端默认"
+                      style={{ width: "100%" }}
+                      disabled={getFieldValue("strategy") !== "quality"}
+                    />
                   </Form.Item>
                 )}
               </Form.Item>

@@ -16,7 +16,13 @@ from app.core.runtime_settings import (
 router = APIRouter()
 
 _DEFAULT_SETTINGS = {
-    "random": {"default_attempts": 3, "default_r18_strict": True, "fail_cooldown_ms": 600_000},
+    "random": {
+        "default_attempts": 3,
+        "default_r18_strict": True,
+        "fail_cooldown_ms": 600_000,
+        "strategy": "quality",
+        "quality_samples": 5,
+    },
     "proxy": {"allowlist_domains": []},
 }
 
@@ -198,17 +204,25 @@ async def update_settings(
             raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid random", status_code=400)
 
         defaults: dict[str, Any] = {}
-        for key in ("default_attempts", "default_r18_strict", "fail_cooldown_ms"):
+        for key in ("default_attempts", "default_r18_strict", "fail_cooldown_ms", "strategy", "quality_samples"):
             if key not in random:
                 continue
-            if key in {"default_attempts", "fail_cooldown_ms"}:
+            if key in {"default_attempts", "fail_cooldown_ms", "quality_samples"}:
                 try:
                     n = int(random.get(key))
                 except Exception as exc:
                     raise ApiError(code=ErrorCode.BAD_REQUEST, message=f"Invalid random.{key}", status_code=400) from exc
-                if n < 0 or n > 10_000_000:
+                if key == "quality_samples":
+                    if n < 1 or n > 20:
+                        raise ApiError(code=ErrorCode.BAD_REQUEST, message=f"Invalid random.{key}", status_code=400)
+                elif n < 0 or n > 10_000_000:
                     raise ApiError(code=ErrorCode.BAD_REQUEST, message=f"Invalid random.{key}", status_code=400)
                 defaults[key] = n
+            elif key == "strategy":
+                s = str(random.get(key) or "").strip().lower()
+                if s not in {"quality", "random"}:
+                    raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid random.strategy", status_code=400)
+                defaults[key] = s
             else:
                 v = _as_bool(random.get(key))
                 if v is None:
@@ -216,6 +230,13 @@ async def update_settings(
                 defaults[key] = bool(v)
 
         if defaults:
+            values = await fetch_runtime_settings(request.app.state.engine)
+            runtime = runtime_config_from_values(values)
+            existing_raw = runtime.random_defaults if isinstance(runtime.random_defaults, dict) else {}
+            if existing_raw:
+                merged = dict(existing_raw)
+                merged.update(defaults)
+                defaults = merged
             updates.append(("random.defaults", defaults))
 
     security = body.get("security")

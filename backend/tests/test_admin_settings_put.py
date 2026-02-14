@@ -40,7 +40,13 @@ def test_admin_put_settings_updates_and_get_reflects(tmp_path: Path, monkeypatch
                         "route_mode": "allowlist",
                         "allowlist_domains": ["i.pximg.net"],
                     },
-                    "random": {"default_attempts": 5, "default_r18_strict": False, "fail_cooldown_ms": 12345},
+                    "random": {
+                        "default_attempts": 5,
+                        "default_r18_strict": False,
+                        "fail_cooldown_ms": 12345,
+                        "strategy": "random",
+                        "quality_samples": 7,
+                    },
                     "security": {"hide_origin_url_in_public_json": False},
                     "rate_limit": {"proxy_probe_concurrency": 7},
                 }
@@ -70,6 +76,8 @@ def test_admin_put_settings_updates_and_get_reflects(tmp_path: Path, monkeypatch
         assert settings["random"]["default_attempts"] == 5
         assert settings["random"]["default_r18_strict"] is False
         assert settings["random"]["fail_cooldown_ms"] == 12345
+        assert settings["random"]["strategy"] == "random"
+        assert settings["random"]["quality_samples"] == 7
 
         assert settings["security"]["hide_origin_url_in_public_json"] is False
         assert settings["rate_limit"]["proxy_probe_concurrency"] == 7
@@ -104,4 +112,3 @@ def test_admin_put_settings_rejects_invalid_route_mode(tmp_path: Path, monkeypat
         assert body["ok"] is False
         assert body["code"] == "BAD_REQUEST"
         assert body["request_id"] == "req_test"
-

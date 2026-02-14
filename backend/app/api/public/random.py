@@ -207,6 +207,7 @@ async def random_image(
 
     engine = request.app.state.engine
     Session = create_sessionmaker(engine)
+    runtime = await load_runtime_config(engine)
 
     cooldown_s_raw = (os.environ.get("RANDOM_FAIL_COOLDOWN_SECONDS") or "600").strip()
     try:
@@ -238,18 +239,50 @@ async def random_image(
 
     rng = random.Random(seed_norm) if seed_norm else random
 
-    strategy_norm = (strategy or "quality").strip().lower() or "quality"
-    if strategy_norm not in {"quality", "random"}:
-        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported strategy", status_code=400)
+    random_defaults = runtime.random_defaults if isinstance(runtime.random_defaults, dict) else {}
 
-    quality_samples_i = 5
+    strategy_raw = (strategy or "").strip().lower()
+    strategy_source = "query"
+    if not strategy_raw:
+        strategy_source = "runtime"
+        strategy_raw = str(random_defaults.get("strategy") or "").strip().lower()
+    if not strategy_raw:
+        strategy_source = "fallback"
+        strategy_raw = "quality"
+    if strategy_raw not in {"quality", "random"}:
+        if strategy_source == "query":
+            raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported strategy", status_code=400)
+        strategy_source = "fallback"
+        strategy_raw = "quality"
+
+    strategy_norm = strategy_raw
+
+    quality_samples_i: int
+    quality_samples_source = "query"
     if quality_samples is not None:
         try:
             quality_samples_i = int(quality_samples)
         except Exception as exc:
             raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported quality_samples", status_code=400) from exc
+    else:
+        quality_samples_source = "runtime"
+        raw = random_defaults.get("quality_samples")
+        try:
+            quality_samples_i = int(raw) if raw is not None else 5
+        except Exception:
+            quality_samples_i = 5
     if quality_samples_i < 1 or quality_samples_i > 20:
-        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported quality_samples", status_code=400)
+        if quality_samples_source == "query":
+            raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported quality_samples", status_code=400)
+        quality_samples_source = "fallback"
+        quality_samples_i = 5
+
+    debug_base = {
+        "strategy": strategy_norm,
+        "strategy_source": strategy_source,
+        "quality_samples": int(quality_samples_i),
+        "quality_samples_source": quality_samples_source,
+    }
 
     async def _pick_with_strategy(
         *,
@@ -259,8 +292,8 @@ async def random_image(
         if strategy_norm == "random":
             image = await pick_random_image(session, r=rng.random(), exclude_image_ids=exclude_image_ids, **pick_kwargs)
             if image is None:
-                return None, {"attempts_used": 1, "picked_by": "random_key"}
-            return image, {"attempts_used": 1, "picked_by": "random_key"}
+                return None, {**debug_base, "attempts_used": 1, "picked_by": "random_key"}
+            return image, {**debug_base, "attempts_used": 1, "picked_by": "random_key"}
 
         exclude_set: set[int] = set(int(x) for x in exclude_image_ids or [])
         sampled = 0
@@ -284,14 +317,19 @@ async def random_image(
                 best_score = float(score)
 
         if best_image is None:
-            return None, {"attempts_used": 1, "picked_by": "quality", "quality_samples": int(quality_samples_i), "candidates_sampled": sampled}
+            return None, {
+                **debug_base,
+                "attempts_used": 1,
+                "picked_by": "quality",
+                "candidates_sampled": sampled,
+            }
 
         return (
             best_image,
             {
+                **debug_base,
                 "attempts_used": 1,
                 "picked_by": "quality",
-                "quality_samples": int(quality_samples_i),
                 "candidates_sampled": sampled,
                 "quality_score": float(best_score),
             },
@@ -332,7 +370,6 @@ async def random_image(
                 headers={"Cache-Control": "no-store"},
             )
 
-        runtime = await load_runtime_config(engine)
         origin_url = None if runtime.hide_origin_url_in_public_json else image.original_url
 
         imgproxy_url = None
@@ -422,7 +459,7 @@ async def random_image(
     tried_ids: set[int] = set()
     last_error: ApiError | None = None
     attempts_i = int(attempts)
-    runtime_stream = await load_runtime_config(engine)
+    runtime_stream = runtime
 
     for _ in range(attempts_i):
         async with Session() as session:
