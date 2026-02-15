@@ -176,6 +176,20 @@ def _parse_easy_conflict_policy(value: Any) -> str:
     return v
 
 
+def _parse_bool_strict(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in {"1", "true", "yes", "y", "on"}:
+            return True
+        if v in {"0", "false", "no", "n", "off"}:
+            return False
+    return None
+
+
 async def _load_import_json(request: Request) -> dict[str, Any]:
     try:
         data = await request.json()
@@ -193,6 +207,24 @@ async def _load_import_json(request: Request) -> dict[str, Any]:
     conflict_policy = _parse_conflict_policy(data.get("conflict_policy"))
 
     return {"text": text, "source": source, "conflict_policy": conflict_policy}
+
+
+async def _load_update_endpoint_json(request: Request) -> dict[str, Any]:
+    try:
+        data = await request.json()
+    except Exception as exc:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid JSON body", status_code=400) from exc
+
+    if not isinstance(data, dict):
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid JSON body", status_code=400)
+    if "enabled" not in data:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Missing enabled", status_code=400)
+
+    enabled = _parse_bool_strict(data.get("enabled"))
+    if enabled is None:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported enabled", status_code=400)
+
+    return {"enabled": bool(enabled)}
 
 
 async def _load_easy_import_json(request: Request) -> dict[str, Any]:
@@ -225,12 +257,6 @@ async def import_proxy_endpoints(
 
     body = await _load_import_json(request)
 
-    settings = request.app.state.settings
-    try:
-        encryptor = FieldEncryptor.from_key(settings.field_encryption_key)
-    except Exception as exc:
-        raise ApiError(code=ErrorCode.INTERNAL_ERROR, message="Encryption not configured", status_code=500) from exc
-
     text = str(body["text"])
     source = str(body["source"])
     conflict_policy = str(body["conflict_policy"])
@@ -245,8 +271,11 @@ async def import_proxy_endpoints(
     engine = request.app.state.engine
     Session = create_sessionmaker(engine)
 
+    settings = request.app.state.settings
+    encryptor: FieldEncryptor | None = None
+
     async def _op() -> None:
-        nonlocal created, updated, skipped, errors
+        nonlocal created, updated, skipped, errors, encryptor
         async with Session() as session:
             for line_no, raw in enumerate(text.splitlines(), start=1):
                 uri = raw.strip()
@@ -260,7 +289,21 @@ async def import_proxy_endpoints(
 
                 username = (parsed.username or "").strip()
                 password = parsed.password
-                password_enc = encryptor.encrypt_text(password) if password else ""
+                password_enc = ""
+                if password:
+                    if encryptor is None:
+                        try:
+                            encryptor = FieldEncryptor.from_key(settings.field_encryption_key)
+                        except Exception:
+                            errors.append(
+                                {
+                                    "line": line_no,
+                                    "code": "encryption_not_configured",
+                                    "message": "代理包含密码，但未配置加密密钥（FIELD_ENCRYPTION_KEY）",
+                                }
+                            )
+                            continue
+                    password_enc = encryptor.encrypt_text(password)
 
                 existing = (
                     (
@@ -317,6 +360,36 @@ async def import_proxy_endpoints(
     }
 
 
+@router.put("/proxies/endpoints/{endpoint_id}")
+async def update_proxy_endpoint(
+    endpoint_id: int,
+    request: Request,
+    _claims: dict[str, Any] = Depends(get_admin_claims),
+) -> dict[str, Any]:
+    _ = _claims
+    if endpoint_id <= 0:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid endpoint id", status_code=400)
+
+    rid = get_or_create_request_id(request)
+    body = await _load_update_endpoint_json(request)
+    enabled = bool(body["enabled"])
+
+    now = iso_utc_ms()
+
+    engine = request.app.state.engine
+    Session = create_sessionmaker(engine)
+    async with Session() as session:
+        row = await session.get(ProxyEndpoint, endpoint_id)
+        if row is None:
+            raise ApiError(code=ErrorCode.NOT_FOUND, message="Proxy endpoint not found", status_code=404)
+
+        row.enabled = 1 if enabled else 0
+        row.updated_at = now
+        await session.commit()
+
+    return {"ok": True, "endpoint_id": str(endpoint_id), "enabled": enabled, "request_id": rid}
+
+
 @router.post("/proxies/easy-proxies/import")
 async def import_easy_proxies(
     request: Request,
@@ -325,12 +398,6 @@ async def import_easy_proxies(
     _ = _claims
     rid = get_or_create_request_id(request)
     body = await _load_easy_import_json(request)
-
-    settings = request.app.state.settings
-    try:
-        encryptor = FieldEncryptor.from_key(settings.field_encryption_key)
-    except Exception as exc:
-        raise ApiError(code=ErrorCode.INTERNAL_ERROR, message="Encryption not configured", status_code=500) from exc
 
     base_url = str(body["base_url"])
     password = str(body["password"])
@@ -356,8 +423,11 @@ async def import_easy_proxies(
     engine = request.app.state.engine
     Session = create_sessionmaker(engine)
 
+    settings = request.app.state.settings
+    encryptor: FieldEncryptor | None = None
+
     async def _op() -> None:
-        nonlocal created, updated, skipped, errors
+        nonlocal created, updated, skipped, errors, encryptor
         async with Session() as session:
             for uri in uris:
                 uri = (uri or "").strip()
@@ -371,7 +441,20 @@ async def import_easy_proxies(
 
                 username = (parsed.username or "").strip()
                 password_v = parsed.password
-                password_enc = encryptor.encrypt_text(password_v) if password_v else ""
+                password_enc = ""
+                if password_v:
+                    if encryptor is None:
+                        try:
+                            encryptor = FieldEncryptor.from_key(settings.field_encryption_key)
+                        except Exception:
+                            errors.append(
+                                {
+                                    "code": "encryption_not_configured",
+                                    "message": "代理包含密码，但未配置加密密钥（FIELD_ENCRYPTION_KEY）",
+                                }
+                            )
+                            continue
+                    password_enc = encryptor.encrypt_text(password_v)
 
                 existing = (
                     (

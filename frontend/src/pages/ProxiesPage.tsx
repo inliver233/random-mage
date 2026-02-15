@@ -69,12 +69,22 @@ type ProxiesProbeResponse = {
   request_id: string;
 };
 
+type UpdateProxyEndpointResponse = {
+  ok: true;
+  endpoint_id: string;
+  enabled: boolean;
+  request_id: string;
+};
+
 function requestIdFromError(err: unknown): string | null {
   if (!(err instanceof ApiError)) return null;
   return err.body?.request_id ? String(err.body.request_id) : null;
 }
 
-const columns: ColumnsType<ProxyEndpointItem> = [
+const columns = (actions: {
+  onToggleEnabled: (row: ProxyEndpointItem) => void;
+  updatePendingId: string | null;
+}): ColumnsType<ProxyEndpointItem> => [
   { title: "节点ID", dataIndex: "id", key: "id" },
   { title: "代理地址（掩码）", dataIndex: "uri_masked", key: "uri_masked" },
   { title: "启用", dataIndex: "enabled", key: "enabled", render: (value) => (value ? "是" : "否") },
@@ -113,6 +123,15 @@ const columns: ColumnsType<ProxyEndpointItem> = [
   { title: "延迟(ms)", dataIndex: "latency_ms", key: "latency_ms" },
   { title: "黑名单至", dataIndex: "blacklisted_until", key: "blacklisted_until" },
   { title: "最后错误", dataIndex: "last_error", key: "last_error" },
+  {
+    title: "操作",
+    key: "actions",
+    render: (_, row) => (
+      <Button size="small" onClick={() => actions.onToggleEnabled(row)} loading={actions.updatePendingId === row.id}>
+        {row.enabled ? "禁用" : "启用"}
+      </Button>
+    ),
+  },
 ];
 
 export function ProxiesPage() {
@@ -136,6 +155,42 @@ export function ProxiesPage() {
   const [easyRequestId, setEasyRequestId] = useState<string | null>(null);
   const [easyResult, setEasyResult] = useState<EasyProxiesImportResponse | null>(null);
   const [easyForm] = Form.useForm<EasyProxiesImportFormValues>();
+
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [actionRequestId, setActionRequestId] = useState<string | null>(null);
+  const [actionErrorMessage, setActionErrorMessage] = useState<string | null>(null);
+  const [actionErrorRequestId, setActionErrorRequestId] = useState<string | null>(null);
+
+  const updateEndpoint = useMutation({
+    mutationFn: (payload: { endpointId: string; enabled: boolean }) =>
+      apiJson<UpdateProxyEndpointResponse>(`/admin/api/proxies/endpoints/${encodeURIComponent(payload.endpointId)}`, {
+        method: "PUT",
+        body: JSON.stringify({ enabled: payload.enabled }),
+      }),
+    onMutate: () => {
+      setActionMessage(null);
+      setActionRequestId(null);
+      setActionErrorMessage(null);
+      setActionErrorRequestId(null);
+    },
+    onSuccess: (data) => {
+      setActionMessage(`代理节点已${data.enabled ? "启用" : "禁用"}：${data.endpoint_id}`);
+      setActionRequestId(data.request_id);
+      queryClient.invalidateQueries({ queryKey: ["admin", "proxies", "endpoints"] });
+    },
+    onError: (err) => {
+      if (err instanceof ApiError) {
+        setActionErrorMessage(err.message);
+        setActionErrorRequestId(requestIdFromError(err));
+        return;
+      }
+      if (err instanceof Error) {
+        setActionErrorMessage(err.message);
+        return;
+      }
+      setActionErrorMessage("代理节点更新失败");
+    },
+  });
 
   const manualImport = useMutation({
     mutationFn: (values: ManualImportFormValues) =>
@@ -228,6 +283,11 @@ export function ProxiesPage() {
       <Typography.Title level={3} style={{ margin: 0 }}>
         代理管理
       </Typography.Title>
+
+      {actionMessage ? <Alert type="success" showIcon message={actionMessage} /> : null}
+      {actionRequestId ? <Typography.Text type="secondary">请求ID: {actionRequestId}</Typography.Text> : null}
+      {actionErrorMessage ? <Alert type="error" showIcon message={actionErrorMessage} /> : null}
+      {actionErrorRequestId ? <Typography.Text type="secondary">请求ID: {actionErrorRequestId}</Typography.Text> : null}
 
       <Card title="手动导入代理节点">
         {manualErrorMessage ? <Alert type="error" showIcon message={manualErrorMessage} /> : null}
@@ -360,7 +420,10 @@ export function ProxiesPage() {
             <Typography.Text type="secondary">请求ID: {query.data.request_id}</Typography.Text>
             <Table<ProxyEndpointItem>
               rowKey={(row) => row.id}
-              columns={columns}
+              columns={columns({
+                onToggleEnabled: (row) => updateEndpoint.mutate({ endpointId: row.id, enabled: !row.enabled }),
+                updatePendingId: updateEndpoint.isPending ? updateEndpoint.variables?.endpointId ?? null : null,
+              })}
               dataSource={query.data.items}
               pagination={false}
               size="small"

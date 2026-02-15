@@ -17,6 +17,7 @@ describe("ProxiesPage", () => {
 
   beforeEach(() => {
     let endpointsCalls = 0;
+    let endpointEnabled = true;
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -30,7 +31,7 @@ describe("ProxiesPage", () => {
                 {
                   id: "1",
                   uri_masked: "http://***:***@1.2.3.4:8080",
-                  enabled: true,
+                  enabled: endpointEnabled,
                   latency_ms: 123,
                   status: "ok",
                   blacklisted_until: null,
@@ -47,6 +48,14 @@ describe("ProxiesPage", () => {
             }),
             { status: 200, headers: { "Content-Type": "application/json" } },
           );
+        }
+        if (url.endsWith("/admin/api/proxies/endpoints/1") && init?.method === "PUT") {
+          const body = init?.body ? JSON.parse(String(init.body)) : {};
+          endpointEnabled = Boolean(body.enabled);
+          return new Response(JSON.stringify({ ok: true, endpoint_id: "1", enabled: endpointEnabled, request_id: "req_toggle" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
         }
         if (url.endsWith("/admin/api/proxies/endpoints/import")) {
           expect(init?.method).toBe("POST");
@@ -150,5 +159,22 @@ describe("ProxiesPage", () => {
     expect(await screen.findByText("探测任务已入队")).toBeInTheDocument();
     expect(await screen.findByText(/任务ID:\s*job_1/)).toBeInTheDocument();
     expect(await screen.findByText(/请求ID:\s*req_probe/)).toBeInTheDocument();
+  });
+
+  it("toggles endpoint enabled", async () => {
+    const qc = makeClient();
+    render(
+      <QueryClientProvider client={qc}>
+        <ProxiesPage />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("代理管理")).toBeInTheDocument();
+    expect(await screen.findByText("http://***:***@1.2.3.4:8080")).toBeInTheDocument();
+
+    fireEvent.click(await screen.findByRole("button", { name: /禁\s*用/ }));
+    expect(await screen.findByText(/代理节点已禁用：1/)).toBeInTheDocument();
+    expect(await screen.findByText(/请求ID:\s*req_toggle/)).toBeInTheDocument();
+    expect(await screen.findByText("否")).toBeInTheDocument();
   });
 });
