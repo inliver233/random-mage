@@ -107,6 +107,25 @@ export function ImportDetailPage() {
             />
           ) : null}
 
+          {(() => {
+            const accepted = Number(query.data?.item.import.accepted || 0);
+            const success = Number(query.data?.item.import.success || 0);
+            const failed = Number(query.data?.item.import.failed || 0);
+            const status = String(query.data?.item.job?.status || "");
+            const waiting = status === "pending" || status === "running";
+            if (accepted > 0 && success === 0 && failed === 0 && waiting) {
+              return (
+                <Alert
+                  type="warning"
+                  showIcon
+                  message="尚未开始处理导入内容"
+                  description={`已接收 ${accepted} 条，但 success=0 / failed=0。通常是 worker 未启动或任务仍在等待。请确认 docker compose 已启动 worker 服务。`}
+                />
+              );
+            }
+            return null;
+          })()}
+
           <Card title="导入概览">
             <Descriptions size="small" column={2}>
               <Descriptions.Item label="创建时间">{query.data?.item.import.created_at}</Descriptions.Item>

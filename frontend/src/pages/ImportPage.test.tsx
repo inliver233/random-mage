@@ -66,6 +66,7 @@ describe("ImportPage", () => {
     );
 
     expect(await screen.findByText("导入图片链接")).toBeInTheDocument();
+    expect(await screen.findByText("支持的链接格式（重要）")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /开始导入/ })).toBeInTheDocument();
     expect(screen.getByPlaceholderText("每行一个链接")).toBeInTheDocument();
   });
