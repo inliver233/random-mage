@@ -1,5 +1,5 @@
 ﻿import { useMutation } from "@tanstack/react-query";
-import { Alert, Button, Card, Col, Form, Input, InputNumber, Row, Select, Skeleton, Space, Switch, Typography } from "antd";
+import { Alert, Button, Card, Col, Form, Input, InputNumber, Row, Select, Skeleton, Space, Typography } from "antd";
 import React, { useEffect } from "react";
 import { useLocation } from "react-router-dom";
 
@@ -7,12 +7,12 @@ import { ApiError, type ApiErrorBody, apiFetch, apiJson } from "../api/client";
 
 type PlaygroundFormValues = {
   format: "image" | "json" | "redirect";
-  attempts: number;
+  attempts: number | null;
   seed: string;
   strategy: "default" | "quality" | "random";
   quality_samples: number | null;
   r18: 0 | 1 | 2;
-  r18_strict: boolean;
+  r18_strict: "default" | "1" | "0";
   orientation: "any" | "portrait" | "landscape" | "square";
   min_width: number | null;
   min_height: number | null;
@@ -45,14 +45,14 @@ function requestIdFromError(err: unknown): string | null {
 function buildRandomUrl(values: PlaygroundFormValues): string {
   const sp = new URLSearchParams();
 
-  sp.set("attempts", String(values.attempts));
+  if (values.attempts != null) sp.set("attempts", String(values.attempts));
   if (values.seed.trim()) sp.set("seed", values.seed.trim());
 
   if (values.strategy !== "default") sp.set("strategy", values.strategy);
   if (values.strategy === "quality" && values.quality_samples != null) sp.set("quality_samples", String(values.quality_samples));
 
   sp.set("r18", String(values.r18));
-  sp.set("r18_strict", values.r18_strict ? "1" : "0");
+  if (values.r18_strict !== "default") sp.set("r18_strict", values.r18_strict);
   if (values.orientation !== "any") sp.set("orientation", values.orientation);
 
   if (values.min_width != null) sp.set("min_width", String(values.min_width));
@@ -236,12 +236,12 @@ export function PlaygroundPage() {
               layout="vertical"
               initialValues={{
                 format: "json",
-                attempts: 3,
+                attempts: null,
                 seed: "",
                 strategy: "default",
                 quality_samples: null,
                 r18: 0,
-                r18_strict: true,
+                r18_strict: "default",
                 orientation: "any",
                 min_width: null,
                 min_height: null,
@@ -266,8 +266,8 @@ export function PlaygroundPage() {
                 />
               </Form.Item>
 
-              <Form.Item label="尝试次数" name="attempts">
-                <InputNumber min={1} max={10} style={{ width: "100%" }} />
+              <Form.Item label="尝试次数（留空=服务端默认）" name="attempts">
+                <InputNumber min={1} max={10} placeholder="留空使用服务端默认" style={{ width: "100%" }} />
               </Form.Item>
 
               <Form.Item label="随机种子" name="seed">
@@ -308,8 +308,14 @@ export function PlaygroundPage() {
                 />
               </Form.Item>
 
-              <Form.Item label="严格 R18 过滤" name="r18_strict" valuePropName="checked">
-                <Switch />
+              <Form.Item label="严格 R18 过滤（留空=服务端默认）" name="r18_strict">
+                <Select
+                  options={[
+                    { value: "default", label: "使用服务端默认" },
+                    { value: "1", label: "开启（更严格）" },
+                    { value: "0", label: "关闭（允许未知 x_restrict）" },
+                  ]}
+                />
               </Form.Item>
 
               <Form.Item label="画面方向" name="orientation">

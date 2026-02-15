@@ -61,12 +61,12 @@ async def random_image(
     request: Request,
     format: str = "image",
     redirect: int = 0,
-    attempts: int = 3,
+    attempts: int | None = None,
     seed: str | None = None,
     strategy: str | None = None,
     quality_samples: int | None = None,
     r18: int = 0,
-    r18_strict: int = 1,
+    r18_strict: int | None = None,
     ai_type: str = "any",
     orientation: str = "any",
     min_width: int = 0,
@@ -83,8 +83,6 @@ async def random_image(
         raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported format", status_code=400)
     if redirect not in {0, 1}:
         raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported redirect", status_code=400)
-    if attempts < 1 or attempts > 10:
-        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported attempts", status_code=400)
     seed_norm = (seed or "").strip()
     if seed is not None and not seed_norm:
         raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported seed", status_code=400)
@@ -102,8 +100,6 @@ async def random_image(
 
     if r18 not in {0, 1, 2}:
         raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported r18", status_code=400)
-    if r18_strict not in {0, 1}:
-        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported r18_strict", status_code=400)
     orientation = (orientation or "").strip().lower()
     orientation_map = {"any": None, "portrait": 1, "landscape": 2, "square": 3}
     if orientation not in orientation_map:
@@ -209,15 +205,84 @@ async def random_image(
     Session = create_sessionmaker(engine)
     runtime = await load_runtime_config(engine)
 
-    cooldown_s_raw = (os.environ.get("RANDOM_FAIL_COOLDOWN_SECONDS") or "600").strip()
+    random_defaults = runtime.random_defaults if isinstance(runtime.random_defaults, dict) else {}
+
+    attempts_source = "query"
+    attempts_i = 3
+    if attempts is not None:
+        try:
+            attempts_i = int(attempts)
+        except Exception as exc:
+            raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported attempts", status_code=400) from exc
+    else:
+        raw = random_defaults.get("default_attempts")
+        if raw is None:
+            attempts_source = "fallback"
+            attempts_i = 3
+        else:
+            attempts_source = "runtime"
+            try:
+                attempts_i = int(raw)
+            except Exception:
+                attempts_i = 3
+    if attempts_i < 1 or attempts_i > 10:
+        if attempts_source == "query":
+            raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported attempts", status_code=400)
+        attempts_source = "fallback"
+        attempts_i = 3
+    attempts = int(attempts_i)
+
+    r18_strict_source = "query"
+    r18_strict_i = 1
+    if r18_strict is not None:
+        try:
+            r18_strict_i = int(r18_strict)
+        except Exception as exc:
+            raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported r18_strict", status_code=400) from exc
+    else:
+        raw = random_defaults.get("default_r18_strict")
+        if raw is None:
+            r18_strict_source = "fallback"
+            r18_strict_i = 1
+        elif isinstance(raw, bool):
+            r18_strict_source = "runtime"
+            r18_strict_i = 1 if raw else 0
+        else:
+            r18_strict_source = "runtime"
+            try:
+                r18_strict_i = int(raw)
+            except Exception:
+                r18_strict_i = 1
+    if r18_strict_i not in {0, 1}:
+        if r18_strict_source == "query":
+            raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported r18_strict", status_code=400)
+        r18_strict_source = "fallback"
+        r18_strict_i = 1
+    r18_strict = int(r18_strict_i)
+
+    fail_cooldown_source = "runtime"
+    fail_cooldown_ms = random_defaults.get("fail_cooldown_ms")
     try:
-        cooldown_s = int(cooldown_s_raw)
+        fail_cooldown_ms_i = int(fail_cooldown_ms) if fail_cooldown_ms is not None else None
     except Exception:
-        cooldown_s = 600
-    cooldown_s = max(0, min(int(cooldown_s), 24 * 60 * 60))
+        fail_cooldown_ms_i = None
+
+    if fail_cooldown_ms_i is None:
+        fail_cooldown_source = "fallback"
+        cooldown_s_raw = (os.environ.get("RANDOM_FAIL_COOLDOWN_SECONDS") or "600").strip()
+        try:
+            cooldown_s = int(cooldown_s_raw)
+        except Exception:
+            cooldown_s = 600
+        cooldown_s = max(0, min(int(cooldown_s), 24 * 60 * 60))
+        fail_cooldown_ms_i = int(cooldown_s) * 1000
+    fail_cooldown_ms_i = max(0, min(int(fail_cooldown_ms_i), 24 * 60 * 60 * 1000))
+
     request_now = datetime.now(timezone.utc)
     fail_cooldown_before = (
-        iso_utc_ms(request_now - timedelta(seconds=cooldown_s)) if cooldown_s > 0 else None
+        iso_utc_ms(request_now - timedelta(milliseconds=int(fail_cooldown_ms_i)))
+        if int(fail_cooldown_ms_i) > 0
+        else None
     )
 
     pick_kwargs: dict[str, Any] = {
@@ -238,8 +303,6 @@ async def random_image(
     }
 
     rng = random.Random(seed_norm) if seed_norm else random
-
-    random_defaults = runtime.random_defaults if isinstance(runtime.random_defaults, dict) else {}
 
     strategy_raw = (strategy or "").strip().lower()
     strategy_source = "query"
@@ -265,12 +328,16 @@ async def random_image(
         except Exception as exc:
             raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported quality_samples", status_code=400) from exc
     else:
-        quality_samples_source = "runtime"
         raw = random_defaults.get("quality_samples")
-        try:
-            quality_samples_i = int(raw) if raw is not None else 5
-        except Exception:
+        if raw is None:
+            quality_samples_source = "fallback"
             quality_samples_i = 5
+        else:
+            quality_samples_source = "runtime"
+            try:
+                quality_samples_i = int(raw)
+            except Exception:
+                quality_samples_i = 5
     if quality_samples_i < 1 or quality_samples_i > 20:
         if quality_samples_source == "query":
             raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported quality_samples", status_code=400)
@@ -278,6 +345,12 @@ async def random_image(
         quality_samples_i = 5
 
     debug_base = {
+        "attempts": int(attempts_i),
+        "attempts_source": attempts_source,
+        "r18_strict": int(r18_strict_i),
+        "r18_strict_source": r18_strict_source,
+        "fail_cooldown_ms": int(fail_cooldown_ms_i),
+        "fail_cooldown_source": fail_cooldown_source,
         "strategy": strategy_norm,
         "strategy_source": strategy_source,
         "quality_samples": int(quality_samples_i),
