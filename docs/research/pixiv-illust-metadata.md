@@ -84,8 +84,11 @@
   - https://github.com/upbit/pixivpy/wiki/zh_cn/%E6%8D%95%E8%8E%B7%E6%96%B0API
 - Go 客户端 struct 定义包含 `total_view/total_bookmarks/total_comments`
   - https://pkg.go.dev/github.com/everpcpc/pixiv#Illust
+- TS 客户端类型定义直接展示 `x_restrict`、`meta_single_page.original_image_url`、`meta_pages[].image_urls.original` 与 `total_view/total_bookmarks/total_comments`
+  - https://github.com/Moestash/pixiv.ts/blob/master/README.md
 - TS 客户端接口定义包含 `totalView/totalBookmarks/totalComments`
   - https://github.com/akameco/pixiv-app-api
 - 官方帮助中心：点赞功能说明（用于说明“点赞存在”，但字段以 bookmarks 等为主）
   - https://www.pixiv.help/hc/en-us/articles/235584268-Liking-works
-
+- OAuth 刷新鉴权头（`X-Client-Time`/`X-Client-Hash`）说明（用于证明本项目 refresh 实现方式的依据）
+  - https://errorism.dev/posts/pixiv-api/
