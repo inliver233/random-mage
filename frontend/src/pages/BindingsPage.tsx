@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, Card, InputNumber, Skeleton, Space, Table, Typography } from "antd";
+import { Alert, Button, Card, Form, Input, InputNumber, Modal, Skeleton, Space, Table, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import React, { useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -38,9 +38,29 @@ type RecomputeResponse = {
   request_id: string;
 };
 
+type OverrideResponse = {
+  ok: true;
+  binding_id: string;
+  override_proxy_id: string;
+  override_expires_at: string;
+  request_id: string;
+};
+
+type ClearOverrideResponse = {
+  ok: true;
+  binding_id: string;
+  request_id: string;
+};
+
 function requestIdFromError(err: unknown): string | null {
   if (!(err instanceof ApiError)) return null;
   return err.body?.request_id ? String(err.body.request_id) : null;
+}
+
+function messageFromError(err: unknown): string {
+  if (err instanceof ApiError) return err.message;
+  if (err instanceof Error) return err.message;
+  return "未知错误";
 }
 
 function formatProxy(proxy: ProxyRef | null): string {
@@ -55,7 +75,12 @@ function modeLabel(mode: "primary" | "override"): string {
   return mode === "override" ? "覆盖代理" : "主代理";
 }
 
-const columns: ColumnsType<BindingItem> = [
+const columns = (actions: {
+  onOpenOverride: (row: BindingItem) => void;
+  onClearOverride: (row: BindingItem) => void;
+  overridePendingId: string | null;
+  clearPendingId: string | null;
+}): ColumnsType<BindingItem> => [
   {
     title: "令牌",
     key: "token",
@@ -75,7 +100,32 @@ const columns: ColumnsType<BindingItem> = [
   { title: "主代理", key: "primary_proxy", render: (_, row) => formatProxy(row.primary_proxy) },
   { title: "覆盖代理", key: "override_proxy", render: (_, row) => formatProxy(row.override_proxy) || "-" },
   { title: "覆盖过期时间", dataIndex: "override_expires_at", key: "override_expires_at", render: (value) => value || "-" },
+  {
+    title: "操作",
+    key: "actions",
+    render: (_, row) => (
+      <Space wrap>
+        <Button size="small" onClick={() => actions.onOpenOverride(row)} loading={actions.overridePendingId === row.id}>
+          设置覆盖
+        </Button>
+        <Button
+          size="small"
+          onClick={() => actions.onClearOverride(row)}
+          loading={actions.clearPendingId === row.id}
+          disabled={!row.override_proxy}
+        >
+          清除覆盖
+        </Button>
+      </Space>
+    ),
+  },
 ];
+
+type OverrideFormValues = {
+  override_proxy_id: number;
+  ttl_minutes: number;
+  reason: string;
+};
 
 export function BindingsPage() {
   const queryClient = useQueryClient();
@@ -89,6 +139,15 @@ export function BindingsPage() {
 
   const [poolId, setPoolId] = useState<number>(initialPoolId);
   const [maxTokensPerProxy, setMaxTokensPerProxy] = useState<number>(2);
+
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [actionRequestId, setActionRequestId] = useState<string | null>(null);
+  const [actionErrorMessage, setActionErrorMessage] = useState<string | null>(null);
+  const [actionErrorRequestId, setActionErrorRequestId] = useState<string | null>(null);
+
+  const [overrideOpen, setOverrideOpen] = useState(false);
+  const [overrideBinding, setOverrideBinding] = useState<BindingItem | null>(null);
+  const [overrideForm] = Form.useForm<OverrideFormValues>();
 
   const query = useQuery({
     queryKey: ["admin", "bindings", { poolId }],
@@ -106,6 +165,56 @@ export function BindingsPage() {
     },
   });
 
+  const setOverride = useMutation({
+    mutationFn: (payload: { bindingId: string; override_proxy_id: number; ttl_ms: number; reason: string }) =>
+      apiJson<OverrideResponse>(`/admin/api/bindings/${encodeURIComponent(payload.bindingId)}/override`, {
+        method: "POST",
+        body: JSON.stringify({
+          override_proxy_id: payload.override_proxy_id,
+          ttl_ms: payload.ttl_ms,
+          reason: payload.reason,
+        }),
+      }),
+    onMutate: () => {
+      setActionMessage(null);
+      setActionRequestId(null);
+      setActionErrorMessage(null);
+      setActionErrorRequestId(null);
+    },
+    onSuccess: (data) => {
+      setActionMessage(`已设置覆盖代理：绑定 #${data.binding_id} → 节点 #${data.override_proxy_id}`);
+      setActionRequestId(data.request_id);
+      setOverrideOpen(false);
+      setOverrideBinding(null);
+      overrideForm.resetFields();
+      queryClient.invalidateQueries({ queryKey: ["admin", "bindings", { poolId }] });
+    },
+    onError: (err) => {
+      setActionErrorMessage(messageFromError(err));
+      setActionErrorRequestId(requestIdFromError(err));
+    },
+  });
+
+  const clearOverride = useMutation({
+    mutationFn: (bindingId: string) =>
+      apiJson<ClearOverrideResponse>(`/admin/api/bindings/${encodeURIComponent(bindingId)}/clear-override`, { method: "POST" }),
+    onMutate: () => {
+      setActionMessage(null);
+      setActionRequestId(null);
+      setActionErrorMessage(null);
+      setActionErrorRequestId(null);
+    },
+    onSuccess: (data) => {
+      setActionMessage(`已清除覆盖代理：绑定 #${data.binding_id}`);
+      setActionRequestId(data.request_id);
+      queryClient.invalidateQueries({ queryKey: ["admin", "bindings", { poolId }] });
+    },
+    onError: (err) => {
+      setActionErrorMessage(messageFromError(err));
+      setActionErrorRequestId(requestIdFromError(err));
+    },
+  });
+
   const setPoolIdAndSyncUrl = (next: number) => {
     const value = Number.isFinite(next) && next > 0 ? next : 1;
     setPoolId(value);
@@ -119,6 +228,11 @@ export function BindingsPage() {
       <Typography.Title level={3} style={{ margin: 0 }}>
         令牌与代理绑定
       </Typography.Title>
+
+      {actionMessage ? <Alert type="success" showIcon message={actionMessage} /> : null}
+      {actionRequestId ? <Typography.Text type="secondary">请求ID: {actionRequestId}</Typography.Text> : null}
+      {actionErrorMessage ? <Alert type="error" showIcon message={actionErrorMessage} /> : null}
+      {actionErrorRequestId ? <Typography.Text type="secondary">请求ID: {actionErrorRequestId}</Typography.Text> : null}
 
       <Card>
         <Space wrap>
@@ -157,6 +271,74 @@ export function BindingsPage() {
         ) : null}
       </Card>
 
+      <Modal
+        title={overrideBinding ? `设置覆盖代理（绑定 #${overrideBinding.id}）` : "设置覆盖代理"}
+        open={overrideOpen}
+        onCancel={() => {
+          setOverrideOpen(false);
+          setOverrideBinding(null);
+          overrideForm.resetFields();
+        }}
+        footer={null}
+        destroyOnClose
+      >
+        <Form<OverrideFormValues>
+          form={overrideForm}
+          layout="vertical"
+          initialValues={{ override_proxy_id: 0, ttl_minutes: 60, reason: "" }}
+          onFinish={(values) => {
+            const bindingId = overrideBinding?.id;
+            if (!bindingId) return;
+            const ttlMinutes = Number(values.ttl_minutes || 0);
+            const ttlMs = Math.trunc(ttlMinutes * 60 * 1000);
+            setOverride.mutate({
+              bindingId,
+              override_proxy_id: Number(values.override_proxy_id),
+              ttl_ms: ttlMs,
+              reason: String(values.reason || "").trim(),
+            });
+          }}
+        >
+          <Form.Item
+            label="覆盖代理节点ID"
+            name="override_proxy_id"
+            rules={[{ required: true, message: "请输入代理节点ID" }]}
+            extra="必须在当前代理池内且处于启用状态。可在“代理管理”页面查看节点ID。"
+          >
+            <InputNumber min={1} placeholder="例如：10" style={{ width: "100%" }} />
+          </Form.Item>
+
+          <Form.Item
+            label="有效期（分钟）"
+            name="ttl_minutes"
+            rules={[{ required: true, message: "请输入有效期" }]}
+            extra="例如：60=1小时。最大 43200 分钟（30天）。"
+          >
+            <InputNumber min={1} max={43200} placeholder="例如：60" style={{ width: "100%" }} />
+          </Form.Item>
+
+          <Form.Item label="原因（可选）" name="reason">
+            <Input placeholder="例如：临时切换节点排查问题" />
+          </Form.Item>
+
+          <Space style={{ width: "100%", justifyContent: "flex-end" }}>
+            <Button
+              onClick={() => {
+                setOverrideOpen(false);
+                setOverrideBinding(null);
+                overrideForm.resetFields();
+              }}
+              disabled={setOverride.isPending}
+            >
+              取消
+            </Button>
+            <Button type="primary" htmlType="submit" loading={setOverride.isPending}>
+              保存
+            </Button>
+          </Space>
+        </Form>
+      </Modal>
+
       {query.isLoading ? (
         <Skeleton active />
       ) : query.isError ? (
@@ -180,7 +362,22 @@ export function BindingsPage() {
           <Typography.Text type="secondary">请求ID: {query.data.request_id}</Typography.Text>
           <Table<BindingItem>
             rowKey={(row) => row.id}
-            columns={columns}
+            columns={columns({
+              onOpenOverride: (row) => {
+                setOverrideBinding(row);
+                setOverrideOpen(true);
+                const currentId = row.override_proxy?.id || row.primary_proxy.id;
+                const parsed = Number.parseInt(String(currentId || "0"), 10);
+                overrideForm.setFieldsValue({
+                  override_proxy_id: Number.isFinite(parsed) && parsed > 0 ? parsed : 1,
+                  ttl_minutes: 60,
+                  reason: "",
+                });
+              },
+              onClearOverride: (row) => clearOverride.mutate(row.id),
+              overridePendingId: setOverride.isPending ? setOverride.variables?.bindingId ?? null : null,
+              clearPendingId: clearOverride.isPending ? clearOverride.variables ?? null : null,
+            })}
             dataSource={query.data.items}
             pagination={false}
             size="small"
@@ -191,4 +388,3 @@ export function BindingsPage() {
     </Space>
   );
 }
-
