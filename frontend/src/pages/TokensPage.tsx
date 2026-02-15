@@ -36,6 +36,12 @@ type CreateTokenResponse = {
   request_id: string;
 };
 
+type UpdateTokenResponse = {
+  ok: true;
+  token_id: string;
+  request_id: string;
+};
+
 type TestRefreshResponse = {
   ok: true;
   expires_in: number;
@@ -62,10 +68,13 @@ function messageFromError(err: unknown): string {
 }
 
 const columns = (actions: {
+  onEdit: (row: TokenItem) => void;
   onTestRefresh: (id: string) => void;
   onResetFailures: (id: string) => void;
+  onToggleEnabled: (row: TokenItem) => void;
   testPendingId: string | null;
   resetPendingId: string | null;
+  updatePendingId: string | null;
 }): ColumnsType<TokenItem> => [
   { title: "标签", dataIndex: "label", key: "label" },
   { title: "启用", dataIndex: "enabled", key: "enabled", render: (value) => (value ? "是" : "否") },
@@ -80,6 +89,12 @@ const columns = (actions: {
     key: "actions",
     render: (_, row) => (
       <Space wrap>
+        <Button size="small" onClick={() => actions.onEdit(row)}>
+          编辑
+        </Button>
+        <Button size="small" onClick={() => actions.onToggleEnabled(row)} loading={actions.updatePendingId === row.id}>
+          {row.enabled ? "禁用" : "启用"}
+        </Button>
         <Button size="small" onClick={() => actions.onTestRefresh(row.id)} loading={actions.testPendingId === row.id}>
           测试刷新
         </Button>
@@ -91,10 +106,19 @@ const columns = (actions: {
   },
 ];
 
+type EditTokenFormValues = {
+  label: string;
+  enabled: boolean;
+  weight: number;
+};
+
 export function TokensPage() {
   const queryClient = useQueryClient();
   const [createOpen, setCreateOpen] = React.useState(false);
   const [createForm] = Form.useForm<CreateTokenFormValues>();
+  const [editOpen, setEditOpen] = React.useState(false);
+  const [editForm] = Form.useForm<EditTokenFormValues>();
+  const [editingToken, setEditingToken] = React.useState<TokenItem | null>(null);
 
   const [actionMessage, setActionMessage] = React.useState<string | null>(null);
   const [actionRequestId, setActionRequestId] = React.useState<string | null>(null);
@@ -133,6 +157,34 @@ export function TokensPage() {
     onError: (err) => {
       setActionErrorMessage(messageFromError(err));
       setActionErrorRequestId(requestIdFromError(err));
+    },
+  });
+
+  const updateToken = useMutation({
+    mutationFn: (payload: { tokenId: string; body: Record<string, unknown> }) =>
+      apiJson<UpdateTokenResponse>(`/admin/api/tokens/${encodeURIComponent(payload.tokenId)}`, {
+        method: "PUT",
+        body: JSON.stringify(payload.body),
+      }),
+    onMutate: () => {
+      setActionMessage(null);
+      setActionRequestId(null);
+      setActionErrorMessage(null);
+      setActionErrorRequestId(null);
+    },
+    onSuccess: (data) => {
+      setEditOpen(false);
+      setEditingToken(null);
+      editForm.resetFields();
+
+      setActionMessage(`令牌已更新：${data.token_id}`);
+      setActionRequestId(data.request_id);
+      queryClient.invalidateQueries({ queryKey: ["admin", "tokens"] });
+    },
+    onError: (err) => {
+      setActionErrorMessage(messageFromError(err));
+      setActionErrorRequestId(requestIdFromError(err));
+      queryClient.invalidateQueries({ queryKey: ["admin", "tokens"] });
     },
   });
 
@@ -177,6 +229,22 @@ export function TokensPage() {
       setActionErrorRequestId(requestIdFromError(err));
     },
   });
+
+  const openEdit = (row: TokenItem) => {
+    setEditingToken(row);
+    setEditOpen(true);
+    editForm.setFieldsValue({
+      label: row.label || "",
+      enabled: Boolean(row.enabled),
+      weight: row.weight != null ? row.weight : 1.0,
+    });
+  };
+
+  const closeEdit = () => {
+    setEditOpen(false);
+    setEditingToken(null);
+    editForm.resetFields();
+  };
 
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
@@ -255,6 +323,55 @@ export function TokensPage() {
         </Form>
       </Modal>
 
+      <Modal
+        title={editingToken ? `编辑令牌 #${editingToken.id}` : "编辑令牌"}
+        open={editOpen}
+        onCancel={closeEdit}
+        footer={null}
+        destroyOnClose
+      >
+        <Form<EditTokenFormValues>
+          form={editForm}
+          layout="vertical"
+          initialValues={{ label: "", enabled: true, weight: 1.0 }}
+          onFinish={(values) => {
+            const tokenId = editingToken?.id;
+            if (!tokenId) return;
+            updateToken.mutate({
+              tokenId,
+              body: {
+                label: values.label.trim() ? values.label.trim() : null,
+                enabled: Boolean(values.enabled),
+                weight: values.weight,
+              },
+            });
+          }}
+        >
+          <Form.Item label="标签（可选）" name="label">
+            <Input placeholder="例如：主账号" />
+          </Form.Item>
+
+          <Form.Item label="启用" name="enabled" valuePropName="checked">
+            <Switch />
+          </Form.Item>
+
+          <Form.Item label="权重" name="weight" rules={[{ required: true, message: "请输入权重" }]}>
+            <InputNumber min={0} max={100} step={0.1} style={{ width: 180 }} />
+          </Form.Item>
+
+          <Alert type="info" showIcon message="提示" description="刷新令牌不支持在此修改；如需更换请新增令牌并禁用旧令牌。" />
+
+          <Space style={{ width: "100%", justifyContent: "flex-end" }}>
+            <Button onClick={closeEdit} disabled={updateToken.isPending}>
+              取消
+            </Button>
+            <Button type="primary" htmlType="submit" loading={updateToken.isPending}>
+              保存
+            </Button>
+          </Space>
+        </Form>
+      </Modal>
+
       {query.isLoading ? (
         <Skeleton active />
       ) : query.isError ? (
@@ -274,10 +391,17 @@ export function TokensPage() {
           <Table<TokenItem>
             rowKey={(row) => row.id}
             columns={columns({
+              onEdit: (row) => openEdit(row),
               onTestRefresh: (id) => testRefresh.mutate(id),
               onResetFailures: (id) => resetFailures.mutate(id),
+              onToggleEnabled: (row) =>
+                updateToken.mutate({
+                  tokenId: row.id,
+                  body: { enabled: !row.enabled },
+                }),
               testPendingId: testRefresh.isPending ? testRefresh.variables ?? null : null,
               resetPendingId: resetFailures.isPending ? resetFailures.variables ?? null : null,
+              updatePendingId: updateToken.isPending ? updateToken.variables?.tokenId ?? null : null,
             })}
             dataSource={query.data.items}
             pagination={false}

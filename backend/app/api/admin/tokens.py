@@ -37,6 +37,20 @@ def _parse_bool(value: Any, *, default: bool) -> bool:
     return default
 
 
+def _parse_bool_strict(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in {"1", "true", "yes", "y", "on"}:
+            return True
+        if v in {"0", "false", "no", "n", "off"}:
+            return False
+    return None
+
+
 async def _load_create_token_json(request: Request) -> dict[str, Any]:
     try:
         data = await request.json()
@@ -72,6 +86,51 @@ async def _load_create_token_json(request: Request) -> dict[str, Any]:
         "weight": weight,
         "refresh_token": refresh_token,
     }
+
+
+async def _load_update_token_json(request: Request) -> dict[str, Any]:
+    try:
+        data = await request.json()
+    except Exception as exc:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid JSON body", status_code=400) from exc
+
+    if not isinstance(data, dict):
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid JSON body", status_code=400)
+    if not data:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Missing fields", status_code=400)
+
+    out: dict[str, Any] = {}
+
+    if "label" in data:
+        label_raw = data.get("label")
+        if label_raw is None:
+            label = None
+        else:
+            label = str(label_raw).strip() or None
+        if label is not None and len(label) > 200:
+            raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported label", status_code=400)
+        out["label"] = label
+
+    if "enabled" in data:
+        enabled = _parse_bool_strict(data.get("enabled"))
+        if enabled is None:
+            raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported enabled", status_code=400)
+        out["enabled"] = bool(enabled)
+
+    if "weight" in data:
+        weight_raw = data.get("weight")
+        try:
+            weight = float(weight_raw)
+        except Exception as exc:
+            raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported weight", status_code=400) from exc
+        if weight < 0.0 or weight > 100.0:
+            raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported weight", status_code=400)
+        out["weight"] = float(weight)
+
+    if not out:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Missing fields", status_code=400)
+
+    return out
 
 
 @router.get("/tokens")
@@ -150,6 +209,43 @@ async def create_token(
         await session.refresh(row)
 
     return {"ok": True, "token_id": str(row.id), "request_id": rid}
+
+
+@router.put("/tokens/{token_id}")
+async def update_token(
+    token_id: int,
+    request: Request,
+    _claims: dict[str, Any] = Depends(get_admin_claims),
+) -> dict[str, Any]:
+    _ = _claims
+    if token_id <= 0:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid token id", status_code=400)
+
+    rid = get_or_create_request_id(request)
+    body = await _load_update_token_json(request)
+
+    now = iso_utc_ms()
+
+    engine = request.app.state.engine
+    Session = create_sessionmaker(engine)
+
+    async with Session() as session:
+        row = await session.get(PixivToken, token_id)
+        if row is None:
+            raise ApiError(code=ErrorCode.NOT_FOUND, message="Token not found", status_code=404)
+
+        if "label" in body:
+            row.label = body["label"]
+        if "enabled" in body:
+            row.enabled = 1 if bool(body["enabled"]) else 0
+        if "weight" in body:
+            row.weight = float(body["weight"])
+
+        row.updated_at = now
+
+        await session.commit()
+
+    return {"ok": True, "token_id": str(token_id), "request_id": rid}
 
 
 @router.post("/tokens/{token_id}/test-refresh")

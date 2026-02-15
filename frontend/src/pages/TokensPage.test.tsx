@@ -17,6 +17,9 @@ describe("TokensPage", () => {
 
   beforeEach(() => {
     let listCalls = 0;
+    let tokenLabel: string | null = "acc1";
+    let tokenEnabled = true;
+    let tokenWeight = 1.0;
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -37,10 +40,10 @@ describe("TokensPage", () => {
               items: [
                 {
                   id: "1",
-                  label: "acc1",
-                  enabled: true,
+                  label: tokenLabel,
+                  enabled: tokenEnabled,
                   refresh_token_masked: "***",
-                  weight: 1.0,
+                  weight: tokenWeight,
                   error_count: 0,
                   backoff_until: null,
                   last_ok_at: null,
@@ -53,6 +56,16 @@ describe("TokensPage", () => {
             }),
             { status: 200, headers: { "Content-Type": "application/json" } },
           );
+        }
+        if (url.endsWith("/admin/api/tokens/1") && init?.method === "PUT") {
+          const body = init?.body ? JSON.parse(String(init.body)) : {};
+          if ("label" in body) tokenLabel = body.label ?? null;
+          if ("enabled" in body) tokenEnabled = Boolean(body.enabled);
+          if ("weight" in body) tokenWeight = Number(body.weight);
+          return new Response(JSON.stringify({ ok: true, token_id: "1", request_id: "req_update" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
         }
         if (url.endsWith("/admin/api/tokens/1/test-refresh")) {
           expect(init?.method).toBe("POST");
@@ -138,5 +151,33 @@ describe("TokensPage", () => {
     fireEvent.click(await screen.findByRole("button", { name: /重置失败计数/ }));
     expect(await screen.findByText(/已重置失败计数：1/)).toBeInTheDocument();
     expect(await screen.findByText(/请求ID:\s*req_reset/)).toBeInTheDocument();
+  });
+
+  it("updates token", async () => {
+    const qc = makeClient();
+    render(
+      <QueryClientProvider client={qc}>
+        <TokensPage />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("Pixiv 令牌管理")).toBeInTheDocument();
+    expect(await screen.findByText("acc1")).toBeInTheDocument();
+
+    fireEvent.click(await screen.findByRole("button", { name: /编\s*辑/ }));
+    const dialog = await screen.findByRole("dialog", { name: /编辑令牌/ });
+    fireEvent.change(within(dialog).getByPlaceholderText("例如：主账号"), { target: { value: "acc2" } });
+
+    const form = dialog.querySelector("form");
+    expect(form).not.toBeNull();
+    fireEvent.submit(form as HTMLFormElement);
+
+    expect(await screen.findByText(/令牌已更新：1/)).toBeInTheDocument();
+    expect(await screen.findByText(/请求ID:\s*req_update/)).toBeInTheDocument();
+    expect(await screen.findByText("acc2")).toBeInTheDocument();
+
+    fireEvent.click(await screen.findByRole("button", { name: /禁\s*用/ }));
+    expect(await screen.findByText(/令牌已更新：1/)).toBeInTheDocument();
+    expect(await screen.findByText("否")).toBeInTheDocument();
   });
 });
