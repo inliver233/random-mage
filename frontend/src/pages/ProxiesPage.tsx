@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, Card, Form, Input, Select, Skeleton, Space, Table, Typography } from "antd";
+import { Alert, Button, Card, Form, Input, InputNumber, Select, Skeleton, Space, Table, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import React, { useState } from "react";
 
@@ -151,6 +151,9 @@ export function ProxiesPage() {
   const [probeErrorMessage, setProbeErrorMessage] = useState<string | null>(null);
   const [probeRequestId, setProbeRequestId] = useState<string | null>(null);
   const [probeJobId, setProbeJobId] = useState<string | null>(null);
+  const [probeUrl, setProbeUrl] = useState<string>("https://www.pixiv.net/robots.txt");
+  const [probeTimeoutMs, setProbeTimeoutMs] = useState<number>(8000);
+  const [probeConcurrency, setProbeConcurrency] = useState<number>(10);
 
   const [easyErrorMessage, setEasyErrorMessage] = useState<string | null>(null);
   const [easyRequestId, setEasyRequestId] = useState<string | null>(null);
@@ -225,7 +228,17 @@ export function ProxiesPage() {
   });
 
   const probe = useMutation({
-    mutationFn: () => apiJson<ProxiesProbeResponse>("/admin/api/proxies/probe", { method: "POST" }),
+    mutationFn: () =>
+      apiJson<ProxiesProbeResponse>("/admin/api/proxies/probe", {
+        method: "POST",
+        body: JSON.stringify({
+          probe_url: String(probeUrl || "").trim() || undefined,
+          timeout_ms:
+            Number.isFinite(Number(probeTimeoutMs)) && Number(probeTimeoutMs) > 0 ? Number(probeTimeoutMs) : undefined,
+          concurrency:
+            Number.isFinite(Number(probeConcurrency)) && Number(probeConcurrency) > 0 ? Number(probeConcurrency) : undefined,
+        }),
+      }),
     onMutate: () => {
       setProbeErrorMessage(null);
       setProbeRequestId(null);
@@ -393,6 +406,19 @@ export function ProxiesPage() {
           <Button onClick={() => query.refetch()} loading={query.isFetching}>
             刷新列表
           </Button>
+        </Space>
+        <Space wrap style={{ marginBottom: 12 }}>
+          <Typography.Text>探测URL:</Typography.Text>
+          <Input
+            value={probeUrl}
+            onChange={(e) => setProbeUrl(e.target.value)}
+            placeholder="留空使用默认"
+            style={{ width: 360 }}
+          />
+          <Typography.Text>超时(ms):</Typography.Text>
+          <InputNumber min={100} max={600000} value={probeTimeoutMs} onChange={(v) => setProbeTimeoutMs(typeof v === "number" ? v : 8000)} />
+          <Typography.Text>并发:</Typography.Text>
+          <InputNumber min={1} max={200} value={probeConcurrency} onChange={(v) => setProbeConcurrency(typeof v === "number" ? v : 10)} />
         </Space>
 
         {probe.isPending ? <Alert type="info" showIcon message="探测任务入队中..." style={{ marginBottom: 12 }} /> : null}

@@ -245,6 +245,51 @@ async def _load_easy_import_json(request: Request) -> dict[str, Any]:
     return {"base_url": base_url, "password": password, "conflict_policy": conflict_policy}
 
 
+async def _load_probe_json(request: Request) -> dict[str, Any]:
+    try:
+        data = await request.json()
+    except Exception:
+        return {}
+
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid JSON body", status_code=400)
+
+    out: dict[str, Any] = {}
+
+    if "probe_url" in data:
+        probe_url = str(data.get("probe_url") or "").strip()
+        if probe_url:
+            if len(probe_url) > 2000:
+                raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid probe_url", status_code=400)
+            if "://" not in probe_url:
+                raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid probe_url", status_code=400)
+            out["probe_url"] = probe_url
+
+    if "timeout_ms" in data:
+        raw = data.get("timeout_ms")
+        try:
+            timeout_ms = int(raw)
+        except Exception as exc:
+            raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid timeout_ms", status_code=400) from exc
+        if timeout_ms <= 0 or timeout_ms > 600_000:
+            raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid timeout_ms", status_code=400)
+        out["timeout_ms"] = int(timeout_ms)
+
+    if "concurrency" in data:
+        raw = data.get("concurrency")
+        try:
+            concurrency = int(raw)
+        except Exception as exc:
+            raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid concurrency", status_code=400) from exc
+        if concurrency < 1 or concurrency > 200:
+            raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid concurrency", status_code=400)
+        out["concurrency"] = int(concurrency)
+
+    return out
+
+
 @router.post("/proxies/endpoints/import")
 async def import_proxy_endpoints(
     request: Request,
@@ -554,6 +599,7 @@ async def probe_proxies(
 ) -> dict[str, Any]:
     _ = _claims
     rid = get_or_create_request_id(request)
+    opts = await _load_probe_json(request)
 
     engine = request.app.state.engine
     Session = create_sessionmaker(engine)
@@ -563,7 +609,7 @@ async def probe_proxies(
             job = JobRow(
                 type="proxy_probe",
                 status="pending",
-                payload_json=json.dumps({"scope": "all"}, ensure_ascii=False),
+                payload_json=json.dumps({"scope": "all", **opts}, ensure_ascii=False),
                 ref_type="proxy_probe",
                 ref_id="all",
             )

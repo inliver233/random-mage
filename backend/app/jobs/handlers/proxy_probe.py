@@ -21,9 +21,9 @@ from app.db.models.proxy_endpoints import ProxyEndpoint
 from app.db.session import create_sessionmaker, with_sqlite_busy_retry
 from app.jobs.errors import JobPermanentError
 
-DEFAULT_PROBE_URL = "https://www.google.com/generate_204"
-DEFAULT_TIMEOUT_MS = 5000
-DEFAULT_CONCURRENCY = 20
+DEFAULT_PROBE_URL = "https://www.pixiv.net/robots.txt"
+DEFAULT_TIMEOUT_MS = 8000
+DEFAULT_CONCURRENCY = 10
 
 BLACKLIST_AFTER_FAILURES = 3
 BLACKLIST_TTL_S = 30 * 60
