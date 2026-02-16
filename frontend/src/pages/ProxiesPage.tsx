@@ -60,6 +60,7 @@ type EasyProxiesImportResponse = {
   updated: number;
   skipped: number;
   errors: Array<{ code: string; message: string }>;
+  warnings?: string[];
   request_id: string;
 };
 
@@ -350,8 +351,8 @@ export function ProxiesPage() {
           <Form.Item label="服务地址" name="base_url" rules={[{ required: true, message: "请输入 easy-proxies 地址" }]}>
             <Input placeholder="http://easy-proxies:9090" />
           </Form.Item>
-          <Form.Item label="访问密码" name="password" rules={[{ required: true, message: "请输入访问密码" }]}>
-            <Input.Password placeholder="必填" />
+          <Form.Item label="访问密码（可选）" name="password">
+            <Input.Password placeholder="可选" />
           </Form.Item>
           <Form.Item label="冲突策略" name="conflict_policy">
             <Select
@@ -369,13 +370,18 @@ export function ProxiesPage() {
 
         {easyImport.isPending ? <Alert type="info" showIcon message="正在从外部代理服务导入..." style={{ marginTop: 12 }} /> : null}
         {easyResult ? (
-          <Alert
-            type="success"
-            showIcon
-            message="外部代理服务导入完成"
-            description={`新增: ${easyResult.created}，更新: ${easyResult.updated}，跳过: ${easyResult.skipped}，错误: ${easyResult.errors.length}`}
-            style={{ marginTop: 12 }}
-          />
+          <>
+            <Alert
+              type="success"
+              showIcon
+              message="外部代理服务导入完成"
+              description={`新增: ${easyResult.created}，更新: ${easyResult.updated}，跳过: ${easyResult.skipped}，错误: ${easyResult.errors.length}`}
+              style={{ marginTop: 12 }}
+            />
+            {Array.isArray(easyResult.warnings) && easyResult.warnings.length > 0 ? (
+              <Alert type="warning" showIcon message="导入提示" description={easyResult.warnings.join(" ")} style={{ marginTop: 12 }} />
+            ) : null}
+          </>
         ) : null}
       </Card>
 

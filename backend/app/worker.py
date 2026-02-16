@@ -147,10 +147,29 @@ async def main_async(*, max_iterations: int | None = None, poll_interval_s: floa
         dispatcher = build_default_dispatcher(engine)
 
         base_url = (os.environ.get("EASY_PROXIES_BASE_URL") or "").strip()
-        try:
-            interval_s = float((os.environ.get("EASY_PROXIES_REFRESH_INTERVAL_SECONDS") or "0").strip() or "0")
-        except Exception:
+        raw_auto = (os.environ.get("EASY_PROXIES_AUTO_REFRESH") or "").strip().lower()
+        auto_refresh_disabled = raw_auto in {"0", "false", "no", "n", "off"}
+
+        raw_ms = (os.environ.get("EASY_PROXIES_REFRESH_INTERVAL_MS") or "").strip()
+        raw_s = (os.environ.get("EASY_PROXIES_REFRESH_INTERVAL_SECONDS") or "").strip()
+        if not raw_s:
+            raw_s = (os.environ.get("EASY_PROXIES_REFRESH_INTERVAL_S") or "").strip()
+
+        interval_s = 0.0
+        if raw_ms:
+            try:
+                interval_s = float(raw_ms) / 1000.0
+            except Exception:
+                interval_s = 0.0
+        elif raw_s:
+            try:
+                interval_s = float(raw_s)
+            except Exception:
+                interval_s = 0.0
+
+        if auto_refresh_disabled:
             interval_s = 0.0
+
         conflict_policy = (os.environ.get("EASY_PROXIES_CONFLICT_POLICY") or "skip_non_easy_proxies").strip()
 
         refresher = EasyProxiesAutoRefresher(

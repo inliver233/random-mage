@@ -117,7 +117,7 @@ describe("ProxiesPage", () => {
 
     expect(await screen.findByText("代理管理")).toBeInTheDocument();
     fireEvent.change(screen.getByPlaceholderText("http://easy-proxies:9090"), { target: { value: "http://easy.test" } });
-    fireEvent.change(screen.getByPlaceholderText("必填"), { target: { value: "pw_test" } });
+    fireEvent.change(screen.getByPlaceholderText("可选"), { target: { value: "pw_test" } });
     fireEvent.click(screen.getByRole("button", { name: "开始导入" }));
 
     expect(await screen.findByText("外部代理服务导入完成")).toBeInTheDocument();

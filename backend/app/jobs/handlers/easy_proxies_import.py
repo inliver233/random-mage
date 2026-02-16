@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import json
 from typing import Any
 
@@ -48,6 +49,8 @@ def build_easy_proxies_import_handler(engine: AsyncEngine, *, transport: httpx.B
             raise JobPermanentError("payload.base_url is required")
 
         password = str(payload.get("password") or "").strip()
+        if not password:
+            password = str(os.environ.get("EASY_PROXIES_PASSWORD") or "").strip()
         conflict_policy = _parse_conflict_policy(payload.get("conflict_policy"))
 
         try:
@@ -60,6 +63,23 @@ def build_easy_proxies_import_handler(engine: AsyncEngine, *, transport: httpx.B
             raise RuntimeError("easy_proxies import failed") from exc
         except Exception as exc:
             raise RuntimeError("easy_proxies import failed") from exc
+
+        seen_keys: set[tuple[str, str, int, str]] = set()
+        deduped: list[str] = []
+        for raw in uris:
+            uri = (raw or "").strip()
+            if not uri:
+                continue
+            try:
+                parsed = parse_proxy_uri(uri)
+            except Exception:
+                continue
+            key = (str(parsed.scheme), str(parsed.host), int(parsed.port), str((parsed.username or "").strip()))
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            deduped.append(uri)
+        uris = deduped
 
         now = iso_utc_ms()
 
@@ -125,4 +145,3 @@ def build_easy_proxies_import_handler(engine: AsyncEngine, *, transport: httpx.B
         await with_sqlite_busy_retry(_op)
 
     return _handler
-

@@ -240,8 +240,6 @@ async def _load_easy_import_json(request: Request) -> dict[str, Any]:
     password = str(data.get("password") or "").strip()
     if not base_url:
         raise ApiError(code=ErrorCode.BAD_REQUEST, message="Missing base_url", status_code=400)
-    if not password:
-        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Missing password", status_code=400)
 
     conflict_policy = _parse_easy_conflict_policy(data.get("conflict_policy"))
     return {"base_url": base_url, "password": password, "conflict_policy": conflict_policy}
@@ -406,12 +404,47 @@ async def import_easy_proxies(
     transport = getattr(request.app.state, "httpx_transport", None)
 
     try:
-        auth = await easy_proxies_auth(base_url=base_url, password=password, transport=transport)
-        uris = await easy_proxies_export(base_url=base_url, bearer_token=auth.token, transport=transport)
+        bearer_token: str | None = None
+        if password.strip():
+            auth = await easy_proxies_auth(base_url=base_url, password=password, transport=transport)
+            bearer_token = auth.token
+        uris = await easy_proxies_export(base_url=base_url, bearer_token=bearer_token, transport=transport)
     except EasyProxiesError as exc:
         raise ApiError(code=ErrorCode.INTERNAL_ERROR, message="easy_proxies import failed", status_code=502) from exc
     except Exception as exc:
         raise ApiError(code=ErrorCode.INTERNAL_ERROR, message="easy_proxies import failed", status_code=502) from exc
+
+    warnings: list[str] = []
+    raw_count = len(uris)
+    seen_keys: set[tuple[str, str, int, str]] = set()
+    deduped: list[str] = []
+    invalid_uris: list[str] = []
+    duplicates = 0
+    invalid = 0
+    for raw in uris:
+        uri = (raw or "").strip()
+        if not uri:
+            continue
+        try:
+            parsed = parse_proxy_uri(uri)
+        except Exception:
+            invalid += 1
+            invalid_uris.append(uri)
+            continue
+        key = (str(parsed.scheme), str(parsed.host), int(parsed.port), str((parsed.username or "").strip()))
+        if key in seen_keys:
+            duplicates += 1
+            continue
+        seen_keys.add(key)
+        deduped.append(uri)
+
+    uris = deduped + invalid_uris
+    if duplicates > 0:
+        warnings.append(f"检测到导出结果包含重复入口（已去重 {duplicates} 条）。")
+    if raw_count > 1 and len(uris) <= 1:
+        warnings.append("当前 easy_proxies 可能处于 pool 模式（所有节点共享同一入口端口），导入后只会得到一个入口。若要每节点独立端口，请在 easy_proxies 启用 multi-port 或 hybrid 模式后再导入。")
+    if invalid > 0:
+        warnings.append(f"有 {invalid} 条导出内容不是合法代理 URI，已跳过。")
 
     created = 0
     updated = 0
@@ -430,9 +463,6 @@ async def import_easy_proxies(
         nonlocal created, updated, skipped, errors, encryptor
         async with Session() as session:
             for uri in uris:
-                uri = (uri or "").strip()
-                if not uri:
-                    continue
                 try:
                     parsed = parse_proxy_uri(uri)
                 except Exception:
@@ -512,6 +542,7 @@ async def import_easy_proxies(
         "updated": updated,
         "skipped": skipped,
         "errors": errors[:200],
+        "warnings": warnings[:50],
         "request_id": rid,
     }
 
