@@ -71,6 +71,17 @@ function translateErrorCode(code: string): string | null {
   }
 }
 
+export function formatApiErrorMessage(status: number, body: ApiErrorBody | null): string {
+  const bodyCode = body && typeof body.code === "string" ? String(body.code).trim() : "";
+  const rawMessage = body && typeof body.message === "string" ? body.message.trim() : "";
+  const translated = bodyCode ? translateErrorCode(bodyCode) : null;
+
+  if (translated) {
+    return rawMessage && containsChinese(rawMessage) ? rawMessage : translated;
+  }
+  return rawMessage || `HTTP ${status}`;
+}
+
 function getApiBaseUrl(): string {
   const raw = (import.meta.env.VITE_API_BASE_URL || "").trim();
   return raw.endsWith("/") ? raw.slice(0, -1) : raw;
@@ -136,10 +147,6 @@ export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
     }
   }
 
-  const bodyCode = body && typeof body.code === "string" ? String(body.code).trim() : "";
-  const rawMessage = body && typeof body.message === "string" ? body.message.trim() : "";
-  const translated = bodyCode ? translateErrorCode(bodyCode) : null;
-
-  const msg = translated ? (rawMessage && containsChinese(rawMessage) ? rawMessage : translated) : rawMessage || `HTTP ${resp.status}`;
+  const msg = formatApiErrorMessage(resp.status, body);
   throw new ApiError(msg, { status: resp.status, body });
 }

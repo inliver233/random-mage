@@ -3,7 +3,7 @@ import { Alert, Button, Card, Col, Form, Input, InputNumber, Row, Select, Skelet
 import React, { useEffect } from "react";
 import { useLocation } from "react-router-dom";
 
-import { ApiError, type ApiErrorBody, apiFetch, apiJson } from "../api/client";
+import { ApiError, type ApiErrorBody, apiFetch, apiJson, formatApiErrorMessage } from "../api/client";
 
 type PlaygroundFormValues = {
   format: "image" | "json" | "redirect";
@@ -108,13 +108,36 @@ async function parseApiErrorFromResponse(resp: Response): Promise<ApiError> {
     try {
       const raw = (await resp.json()) as unknown;
       const body = isApiErrorBody(raw) ? raw : null;
-      const message = body?.message?.trim() ? body.message : `HTTP ${resp.status}`;
+      const message = formatApiErrorMessage(resp.status, body);
       return new ApiError(message, { status: resp.status, body });
     } catch {
       // fall through
     }
   }
   return new ApiError(`HTTP ${resp.status}`, { status: resp.status });
+}
+
+function hintsFromError(err: unknown): { appliedFilters: Record<string, unknown> | null; suggestions: string[] } | null {
+  if (!(err instanceof ApiError)) return null;
+  const details = err.body?.details;
+  if (!details || typeof details !== "object") return null;
+  const hintsRaw = (details as Record<string, unknown>)["hints"];
+  if (!hintsRaw || typeof hintsRaw !== "object" || Array.isArray(hintsRaw)) return null;
+
+  const hints = hintsRaw as Record<string, unknown>;
+  const appliedFiltersRaw = hints["applied_filters"];
+  const suggestionsRaw = hints["suggestions"];
+
+  const appliedFilters =
+    appliedFiltersRaw && typeof appliedFiltersRaw === "object" && !Array.isArray(appliedFiltersRaw)
+      ? (appliedFiltersRaw as Record<string, unknown>)
+      : null;
+
+  const suggestions = Array.isArray(suggestionsRaw)
+    ? suggestionsRaw.map((v) => String(v || "").trim()).filter((v) => v.length > 0)
+    : [];
+
+  return appliedFilters || suggestions.length > 0 ? { appliedFilters, suggestions } : null;
 }
 
 async function fetchPlayground(values: PlaygroundFormValues): Promise<PlaygroundResult> {
@@ -386,7 +409,36 @@ export function PlaygroundPage() {
                 type="error"
                 showIcon
                 message={m.error instanceof Error ? m.error.message : "请求失败"}
-                description={requestIdFromError(m.error) ? `请求ID: ${requestIdFromError(m.error)}` : ""}
+                description={
+                  (() => {
+                    const rid = requestIdFromError(m.error);
+                    const hints = hintsFromError(m.error);
+                    if (!rid && !hints) return "";
+                    return (
+                      <Space direction="vertical" size={4}>
+                        {rid ? <Typography.Text type="secondary">请求ID: {rid}</Typography.Text> : null}
+                        {hints?.suggestions && hints.suggestions.length > 0 ? (
+                          <>
+                            <Typography.Text>建议：</Typography.Text>
+                            <ul style={{ margin: 0, paddingLeft: 18 }}>
+                              {hints.suggestions.map((s) => (
+                                <li key={s}>{s}</li>
+                              ))}
+                            </ul>
+                          </>
+                        ) : null}
+                        {hints?.appliedFilters ? (
+                          <>
+                            <Typography.Text>本次筛选条件：</Typography.Text>
+                            <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                              {JSON.stringify(hints.appliedFilters, null, 2)}
+                            </pre>
+                          </>
+                        ) : null}
+                      </Space>
+                    );
+                  })()
+                }
               />
             ) : m.isSuccess ? (
               <Space direction="vertical" size="middle" style={{ width: "100%" }}>
