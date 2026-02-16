@@ -8,14 +8,20 @@ from fastapi.responses import JSONResponse
 
 from app.core.errors import ApiError, ErrorCode
 from app.core.http_stream import stream_url
+import sqlalchemy as sa
+
 from app.core.pixiv_urls import ALLOWED_IMAGE_EXTS
 from app.core.request_id import get_or_create_request_id, set_request_id_header, set_request_id_on_state
 from app.core.runtime_settings import load_runtime_config
+from app.core.time import iso_utc_ms
 from app.core.proxy_routing import select_proxy_uri_for_url
 from app.db.images_get import get_image_by_id
 from app.db.images_list import list_images as db_list_images
+from app.db.images_mark import mark_image_failure, mark_image_ok
+from app.db.models.image_tags import ImageTag
 from app.db.session import create_sessionmaker
 from app.db.tags_get import get_tag_names_for_image
+from app.jobs.enqueue import enqueue_opportunistic_hydrate_metadata
 
 router = APIRouter()
 
@@ -250,10 +256,36 @@ async def proxy_image(
     engine = request.app.state.engine
     Session = create_sessionmaker(engine)
 
+    needs_hydrate = False
+    should_mark_ok = False
     async with Session() as session:
         image = await get_image_by_id(session, image_id=image_id)
         if image is None or (image.ext or "").lower() != ext:
             raise ApiError(code=ErrorCode.NOT_FOUND, message="Image not found", status_code=404)
+        should_mark_ok = image.last_ok_at is None or image.last_error_code is not None
+
+        missing_basic_fields = (
+            getattr(image, "width", None) is None
+            or getattr(image, "height", None) is None
+            or getattr(image, "x_restrict", None) is None
+            or getattr(image, "ai_type", None) is None
+            or getattr(image, "user_id", None) is None
+            or not str(getattr(image, "user_name", "") or "").strip()
+            or not str(getattr(image, "title", "") or "").strip()
+            or not str(getattr(image, "created_at_pixiv", "") or "").strip()
+            or getattr(image, "bookmark_count", None) is None
+            or getattr(image, "view_count", None) is None
+            or getattr(image, "comment_count", None) is None
+        )
+        if missing_basic_fields:
+            needs_hydrate = True
+        else:
+            tag_row = (
+                await session.execute(
+                    sa.select(ImageTag.image_id).where(ImageTag.image_id == int(image.id)).limit(1)
+                )
+            ).scalar_one_or_none()
+            needs_hydrate = tag_row is None
 
     runtime = await load_runtime_config(engine)
     proxy_uri = None
@@ -267,10 +299,35 @@ async def proxy_image(
         proxy_uri = picked.uri
 
     transport = getattr(request.app.state, "httpx_transport", None)
-    return await stream_url(
-        image.original_url,
-        transport=transport,
-        proxy=proxy_uri,
-        cache_control="public, max-age=31536000, immutable",
-        range_header=request.headers.get("Range"),
-    )
+    now = iso_utc_ms()
+    try:
+        resp = await stream_url(
+            image.original_url,
+            transport=transport,
+            proxy=proxy_uri,
+            cache_control="public, max-age=31536000, immutable",
+            range_header=request.headers.get("Range"),
+        )
+        if should_mark_ok:
+            await mark_image_ok(engine, image_id=int(image.id), now=now)
+        if needs_hydrate:
+            try:
+                await enqueue_opportunistic_hydrate_metadata(engine, illust_id=int(image.illust_id), reason="image_proxy")
+            except Exception:
+                pass
+        return resp
+    except ApiError as exc:
+        if exc.code in {
+            ErrorCode.UPSTREAM_STREAM_ERROR,
+            ErrorCode.UPSTREAM_403,
+            ErrorCode.UPSTREAM_404,
+            ErrorCode.UPSTREAM_RATE_LIMIT,
+        }:
+            await mark_image_failure(
+                engine,
+                image_id=int(image.id),
+                now=now,
+                error_code=exc.code.value,
+                error_message=exc.message,
+            )
+        raise
