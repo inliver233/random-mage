@@ -351,9 +351,25 @@ export function ProxiesPage() {
         />
       </Card>
 
-      <Card title="从外部代理服务导入">
+      <Card title="从 easy-proxies 导入（推荐）">
         {easyErrorMessage ? <Alert type="error" showIcon message={easyErrorMessage} /> : null}
         {easyRequestId ? <Typography.Text type="secondary">请求ID: {easyRequestId}</Typography.Text> : null}
+
+        <Alert
+          type="info"
+          showIcon
+          message="easy-proxies 使用说明"
+          description={
+            <div>
+              <div>1) “面板地址”填 easy-proxies 的 Web/API 地址（不是导出的代理地址）。</div>
+              <div>2) “访问密码”是面板登录密码；代理账号/密码来自导出的代理 URI。</div>
+              <div>3) 若代理密码包含“@”，导出的 URI 可能形如 `http://user:pass@123@host:2323`（多个 @ 属正常）；也支持 `%40` 编码写法。</div>
+              <div>4) pool 模式会导出大量重复入口：这是“单入口代理池”。若要每节点独立端口，请在 easy-proxies 启用 multi-port 或 hybrid 模式。</div>
+              <div>5) 使用 pool 模式时，可在“代理池”页面把该入口的成员权重设置为节点数，以贴近真实容量与绑定容量。</div>
+            </div>
+          }
+          style={{ marginBottom: 12 }}
+        />
 
         <Form<EasyProxiesImportFormValues>
           form={easyForm}
@@ -361,8 +377,13 @@ export function ProxiesPage() {
           initialValues={{ base_url: "", password: "", conflict_policy: "skip_non_easy_proxies" }}
           onFinish={(values) => easyImport.mutate(values)}
         >
-          <Form.Item label="服务地址" name="base_url" rules={[{ required: true, message: "请输入 easy-proxies 地址" }]}>
-            <Input placeholder="http://easy-proxies:9090" />
+          <Form.Item
+            label="面板地址"
+            name="base_url"
+            rules={[{ required: true, message: "请输入 easy-proxies 面板地址" }]}
+            extra="示例：http://你的IP:15666（不要填导出的代理地址）。"
+          >
+            <Input placeholder="http://easy-proxies:15666" />
           </Form.Item>
           <Form.Item label="访问密码（可选）" name="password">
             <Input.Password placeholder="可选" />
