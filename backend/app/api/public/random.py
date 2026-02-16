@@ -176,27 +176,27 @@ async def random_image(
         if created_to_norm is not None:
             applied_filters["created_to"] = created_to_norm
 
-        suggestions: list[str] = ["run hydration backfill to improve metadata coverage"]
+        suggestions: list[str] = ["运行元数据补全任务以提升元数据覆盖率"]
         if r18 == 0 and int(r18_strict) == 1:
-            suggestions.append("set r18_strict=0 to allow unknown x_restrict")
+            suggestions.append("将 r18_strict=0 以允许未知 x_restrict（冷启动阶段更容易命中）")
         if orientation != "any":
-            suggestions.append("set orientation=any")
+            suggestions.append("将 orientation=any（取消方向限制）")
         if int(min_width) > 0 or int(min_height) > 0 or int(min_pixels) > 0:
-            suggestions.append("lower min_width/min_height/min_pixels")
+            suggestions.append("降低 min_width/min_height/min_pixels（放宽分辨率门槛）")
         if included:
-            suggestions.append("relax included_tags")
+            suggestions.append("放宽 included_tags（减少必须包含的标签）")
         if excluded:
-            suggestions.append("relax excluded_tags")
+            suggestions.append("放宽 excluded_tags（减少必须排除的标签）")
         if user_id is not None:
-            suggestions.append("remove user_id filter")
+            suggestions.append("移除 user_id 过滤")
         if illust_id is not None:
-            suggestions.append("remove illust_id filter")
+            suggestions.append("移除 illust_id 过滤")
         if created_from_norm is not None or created_to_norm is not None:
-            suggestions.append("widen created_from/created_to window")
+            suggestions.append("扩大 created_from/created_to 时间范围")
 
         return ApiError(
             code=ErrorCode.NO_MATCH,
-            message="No matching image.",
+            message="没有匹配的图片。",
             status_code=404,
             details={"hints": {"applied_filters": applied_filters, "suggestions": suggestions}},
         )
