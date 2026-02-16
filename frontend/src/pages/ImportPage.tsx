@@ -135,7 +135,7 @@ export function ImportPage() {
         <Form<ImportFormValues>
           form={form}
           layout="vertical"
-          initialValues={{ dry_run: false, hydrate_on_import: false, text: "" }}
+          initialValues={{ dry_run: false, hydrate_on_import: true, text: "" }}
           onFinish={(values) => mutation.mutate(values)}
         >
           <Form.Item label="上传文本文件（可选，.txt）">
@@ -170,7 +170,12 @@ export function ImportPage() {
             <Form.Item label="仅预览（不入库）" name="dry_run" valuePropName="checked">
               <Switch />
             </Form.Item>
-            <Form.Item label="导入后立即补全元数据" name="hydrate_on_import" valuePropName="checked">
+            <Form.Item
+              label="导入后立即补全元数据（推荐）"
+              name="hydrate_on_import"
+              valuePropName="checked"
+              extra="随机质量与筛选依赖元数据覆盖率。需要已配置令牌且 worker 正在运行。"
+            >
               <Switch />
             </Form.Item>
           </Space>
@@ -246,4 +251,3 @@ export function ImportPage() {
     </Space>
   );
 }
-
