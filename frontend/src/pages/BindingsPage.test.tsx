@@ -20,11 +20,49 @@ describe("BindingsPage", () => {
     let listCalls = 0;
     let overrideProxyId: string | null = null;
     let overrideExpiresAt: string | null = null;
+    let recomputeCalls = 0;
 
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
+        if (url.endsWith("/admin/api/bindings/recompute")) {
+          recomputeCalls += 1;
+          expect(init?.method).toBe("POST");
+          const body = init?.body ? JSON.parse(String(init.body)) : {};
+          expect(body.pool_id).toBe(1);
+          expect(body.max_tokens_per_proxy).toBe(2);
+
+          const strict = body.strict !== undefined ? Boolean(body.strict) : true;
+          if (strict) {
+            return new Response(
+              JSON.stringify({
+                ok: false,
+                code: "BAD_REQUEST",
+                message: "代理容量不足（请增加节点或调高单代理最多绑定令牌数）",
+                request_id: `req_capacity_${recomputeCalls}`,
+                details: { token_count: 5, proxy_count: 1, max_tokens_per_proxy: 2, capacity: 2 },
+              }),
+              { status: 400, headers: { "Content-Type": "application/json" } },
+            );
+          }
+
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              pool_id: "1",
+              recomputed: 5,
+              strict: false,
+              over_capacity_assigned: 3,
+              capacity: 2,
+              token_count: 5,
+              proxy_count: 1,
+              max_tokens_per_proxy: 2,
+              request_id: `req_recompute_${recomputeCalls}`,
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
         if (url.endsWith("/admin/api/bindings?pool_id=1")) {
           listCalls += 1;
           return new Response(
@@ -135,5 +173,28 @@ describe("BindingsPage", () => {
     await waitFor(() => {
       expect(screen.queryAllByText("http://9.9.9.9:8080")).toHaveLength(0);
     });
+  });
+
+  it("continues recompute when proxy capacity is insufficient", async () => {
+    const qc = makeClient();
+    render(
+      <MemoryRouter initialEntries={["/admin/bindings?pool_id=1"]}>
+        <QueryClientProvider client={qc}>
+          <BindingsPage />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("令牌与代理绑定")).toBeInTheDocument();
+
+    fireEvent.click(await screen.findByRole("button", { name: "重新计算绑定" }));
+    expect(await screen.findByText("重新计算绑定失败")).toBeInTheDocument();
+    expect(await screen.findByText(/令牌数=5，代理数=1，单代理上限=2/)).toBeInTheDocument();
+    expect(await screen.findByText(/请求ID:\s*req_capacity_1/)).toBeInTheDocument();
+
+    fireEvent.click(await screen.findByRole("button", { name: "继续计算（允许超出容量）" }));
+    expect(await screen.findByText("重新计算绑定完成")).toBeInTheDocument();
+    expect(await screen.findByText(/重算数量:\s*5/)).toBeInTheDocument();
+    expect(await screen.findByText(/请求ID:\s*req_recompute_2/)).toBeInTheDocument();
   });
 });

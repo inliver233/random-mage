@@ -22,6 +22,22 @@ from app.db.session import create_sessionmaker, with_sqlite_busy_retry
 router = APIRouter()
 
 
+def _parse_bool(value: Any, *, default: bool) -> bool:
+    if value is None:
+        return bool(default)
+    if isinstance(value, bool):
+        return bool(value)
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in {"1", "true", "yes", "y", "on"}:
+            return True
+        if v in {"0", "false", "no", "n", "off"}:
+            return False
+    return bool(default)
+
+
 def _fnv1a64(text: str) -> int:
     h = 14695981039346656037
     prime = 1099511628211
@@ -55,6 +71,33 @@ def _compute_primary_assignments(
     return out
 
 
+def _compute_primary_assignments_soft(
+    *,
+    token_ids: list[int],
+    proxy_ids: list[int],
+    max_tokens_per_proxy: int,
+    salt: str,
+) -> tuple[dict[int, int], int]:
+    out = _compute_primary_assignments(
+        token_ids=token_ids,
+        proxy_ids=proxy_ids,
+        max_tokens_per_proxy=max_tokens_per_proxy,
+        salt=salt,
+    )
+
+    over_capacity = 0
+    for token_id in token_ids:
+        if token_id in out:
+            continue
+        order = _rendezvous_proxy_order(token_id=token_id, proxy_ids=proxy_ids, salt=salt)
+        if not order:
+            continue
+        out[token_id] = int(order[0])
+        over_capacity += 1
+
+    return out, int(over_capacity)
+
+
 async def _load_recompute_json(request: Request) -> dict[str, Any]:
     try:
         data = await request.json()
@@ -84,7 +127,9 @@ async def _load_recompute_json(request: Request) -> dict[str, Any]:
     if max_tokens_per_proxy <= 0 or max_tokens_per_proxy > 1000:
         raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid max_tokens_per_proxy", status_code=400)
 
-    return {"pool_id": pool_id, "max_tokens_per_proxy": max_tokens_per_proxy}
+    strict = _parse_bool(data.get("strict"), default=True)
+
+    return {"pool_id": pool_id, "max_tokens_per_proxy": max_tokens_per_proxy, "strict": strict}
 
 
 async def _load_override_json(request: Request) -> dict[str, Any]:
@@ -205,6 +250,7 @@ async def recompute_bindings(
 
     pool_id = int(body["pool_id"])
     max_tokens_per_proxy = int(body["max_tokens_per_proxy"])
+    strict = bool(body.get("strict", True))
 
     engine = request.app.state.engine
     Session = create_sessionmaker(engine)
@@ -241,10 +287,10 @@ async def recompute_bindings(
                 return {"ok": True, "pool_id": str(pool_id), "recomputed": 0, "request_id": rid}
 
             capacity = len(proxy_ids) * max_tokens_per_proxy
-            if len(token_ids) > capacity:
+            if strict and len(token_ids) > capacity:
                 raise ApiError(
                     code=ErrorCode.BAD_REQUEST,
-                    message="Insufficient proxy capacity",
+                    message="代理容量不足（请增加节点或调高单代理最多绑定令牌数）",
                     status_code=400,
                     details={
                         "token_count": len(token_ids),
@@ -254,12 +300,21 @@ async def recompute_bindings(
                 )
 
             salt = f"pool:{pool_id}"
-            assignments = _compute_primary_assignments(
-                token_ids=token_ids,
-                proxy_ids=proxy_ids,
-                max_tokens_per_proxy=max_tokens_per_proxy,
-                salt=salt,
-            )
+            over_capacity_assigned = 0
+            if strict:
+                assignments = _compute_primary_assignments(
+                    token_ids=token_ids,
+                    proxy_ids=proxy_ids,
+                    max_tokens_per_proxy=max_tokens_per_proxy,
+                    salt=salt,
+                )
+            else:
+                assignments, over_capacity_assigned = _compute_primary_assignments_soft(
+                    token_ids=token_ids,
+                    proxy_ids=proxy_ids,
+                    max_tokens_per_proxy=max_tokens_per_proxy,
+                    salt=salt,
+                )
 
             for token_id in token_ids:
                 primary_proxy_id = assignments.get(token_id)
@@ -282,7 +337,19 @@ async def recompute_bindings(
 
             await session.commit()
 
-        return {"ok": True, "pool_id": str(pool_id), "recomputed": len(token_ids), "request_id": rid}
+        resp: dict[str, Any] = {"ok": True, "pool_id": str(pool_id), "recomputed": len(token_ids), "request_id": rid}
+        if not strict:
+            resp.update(
+                {
+                    "strict": False,
+                    "over_capacity_assigned": int(over_capacity_assigned),
+                    "capacity": int(capacity),
+                    "token_count": len(token_ids),
+                    "proxy_count": len(proxy_ids),
+                    "max_tokens_per_proxy": int(max_tokens_per_proxy),
+                }
+            )
+        return resp
 
     return await with_sqlite_busy_retry(_op)
 

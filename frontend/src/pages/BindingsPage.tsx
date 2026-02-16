@@ -35,6 +35,12 @@ type RecomputeResponse = {
   ok: true;
   pool_id: string;
   recomputed: number;
+  strict?: boolean;
+  over_capacity_assigned?: number;
+  capacity?: number;
+  token_count?: number;
+  proxy_count?: number;
+  max_tokens_per_proxy?: number;
   request_id: string;
 };
 
@@ -155,10 +161,14 @@ export function BindingsPage() {
   });
 
   const recompute = useMutation({
-    mutationFn: () =>
+    mutationFn: (vars: { strict?: boolean } | undefined) =>
       apiJson<RecomputeResponse>("/admin/api/bindings/recompute", {
         method: "POST",
-        body: JSON.stringify({ pool_id: poolId, max_tokens_per_proxy: maxTokensPerProxy }),
+        body: JSON.stringify({
+          pool_id: poolId,
+          max_tokens_per_proxy: maxTokensPerProxy,
+          strict: vars?.strict !== undefined ? Boolean(vars.strict) : true,
+        }),
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["admin", "bindings", { poolId }] });
@@ -245,7 +255,7 @@ export function BindingsPage() {
             value={maxTokensPerProxy}
             onChange={(value) => setMaxTokensPerProxy(Number(value || 2))}
           />
-          <Button type="primary" onClick={() => recompute.mutate()} loading={recompute.isPending}>
+          <Button type="primary" onClick={() => recompute.mutate({ strict: true })} loading={recompute.isPending}>
             重新计算绑定
           </Button>
         </Space>
@@ -255,9 +265,39 @@ export function BindingsPage() {
             type="error"
             showIcon
             message="重新计算绑定失败"
-            description={requestIdFromError(recompute.error) ? `请求ID: ${requestIdFromError(recompute.error)}` : ""}
+            description={
+              (() => {
+                const rid = requestIdFromError(recompute.error);
+                const msg = messageFromError(recompute.error);
+                const details =
+                  recompute.error instanceof ApiError && recompute.error.body && typeof recompute.error.body.details === "object"
+                    ? recompute.error.body.details
+                    : null;
+                const tokenCount = details && typeof details.token_count === "number" ? details.token_count : null;
+                const proxyCount = details && typeof details.proxy_count === "number" ? details.proxy_count : null;
+                const maxPer = details && typeof details.max_tokens_per_proxy === "number" ? details.max_tokens_per_proxy : null;
+                const parts = [msg];
+                if (tokenCount !== null && proxyCount !== null && maxPer !== null) {
+                  parts.push(`令牌数=${tokenCount}，代理数=${proxyCount}，单代理上限=${maxPer}`);
+                }
+                if (rid) parts.push(`请求ID: ${rid}`);
+                return parts.filter((p) => String(p || "").trim()).join("；");
+              })()
+            }
             style={{ marginTop: 12 }}
           />
+        ) : null}
+
+        {recompute.isError &&
+        recompute.error instanceof ApiError &&
+        recompute.error.body &&
+        recompute.error.body.code === "BAD_REQUEST" &&
+        typeof recompute.error.body.details?.token_count === "number" &&
+        typeof recompute.error.body.details?.proxy_count === "number" &&
+        typeof recompute.error.body.details?.max_tokens_per_proxy === "number" ? (
+          <Button style={{ marginTop: 12 }} onClick={() => recompute.mutate({ strict: false })} loading={recompute.isPending}>
+            继续计算（允许超出容量）
+          </Button>
         ) : null}
 
         {recompute.isSuccess ? (
