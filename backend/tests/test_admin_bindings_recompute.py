@@ -220,6 +220,86 @@ def test_admin_recompute_bindings_rejects_insufficient_capacity(tmp_path: Path, 
         assert body["request_id"] == "req_test"
 
 
+def test_admin_recompute_bindings_respects_pool_endpoint_weight(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "admin_recompute_bindings_weight.db"
+    db_url = "sqlite+aiosqlite:///" + db_path.as_posix()
+
+    monkeypatch.setenv("APP_ENV", "dev")
+    monkeypatch.setenv("DATABASE_URL", db_url)
+    monkeypatch.setenv("SECRET_KEY", "secret_test")
+    monkeypatch.setenv("ADMIN_USERNAME", "admin")
+
+    app = create_app()
+
+    pool_id: int | None = None
+    endpoint_id: int | None = None
+
+    async def _seed() -> None:
+        async with app.state.engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        Session = create_sessionmaker(app.state.engine)
+        async with Session() as session:
+            pool = ProxyPool(name="pool_weight", description=None, enabled=1)
+            p1 = ProxyEndpoint(
+                scheme="http",
+                host="1.2.3.4",
+                port=8080,
+                username="",
+                password_enc="",
+                enabled=1,
+                source="manual",
+            )
+            tokens = [
+                PixivToken(
+                    label=f"t{i}",
+                    enabled=1,
+                    refresh_token_enc="enc_dummy",
+                    refresh_token_masked="***",
+                    weight=1.0,
+                )
+                for i in range(5)
+            ]
+            session.add_all([pool, p1, *tokens])
+            await session.commit()
+            await session.refresh(pool)
+            await session.refresh(p1)
+
+            session.add(ProxyPoolEndpoint(pool_id=int(pool.id), endpoint_id=int(p1.id), enabled=1, weight=5))
+            await session.commit()
+
+            nonlocal pool_id, endpoint_id
+            pool_id = int(pool.id)
+            endpoint_id = int(p1.id)
+
+    asyncio.run(_seed())
+    assert pool_id is not None
+    assert endpoint_id is not None
+
+    token = create_jwt(secret_key="secret_test", subject="admin", ttl_s=3600)
+    with TestClient(app) as client:
+        resp = client.post(
+            "/admin/api/bindings/recompute",
+            headers={"Authorization": f"Bearer {token}", "X-Request-Id": "req_test"},
+            json={"pool_id": pool_id, "max_tokens_per_proxy": 1},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["pool_id"] == str(pool_id)
+        assert body["recomputed"] == 5
+
+        list_resp = client.get(
+            "/admin/api/bindings",
+            params={"pool_id": pool_id},
+            headers={"Authorization": f"Bearer {token}", "X-Request-Id": "req_test"},
+        )
+        assert list_resp.status_code == 200
+        items = list_resp.json()["items"]
+        assert len(items) == 5
+        assert {int(it["primary_proxy"]["id"]) for it in items} == {int(endpoint_id)}
+
+
 def test_admin_recompute_bindings_allows_over_capacity_when_strict_false(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "admin_recompute_bindings_non_strict.db"
     db_url = "sqlite+aiosqlite:///" + db_path.as_posix()

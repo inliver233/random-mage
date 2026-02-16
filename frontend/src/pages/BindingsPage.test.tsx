@@ -41,7 +41,7 @@ describe("BindingsPage", () => {
                 code: "BAD_REQUEST",
                 message: "代理容量不足（请增加节点或调高单代理最多绑定令牌数）",
                 request_id: `req_capacity_${recomputeCalls}`,
-                details: { token_count: 5, proxy_count: 1, max_tokens_per_proxy: 2, capacity: 2 },
+                details: { token_count: 5, proxy_count: 1, max_tokens_per_proxy: 2, weight_sum: 1, capacity: 2 },
               }),
               { status: 400, headers: { "Content-Type": "application/json" } },
             );
@@ -190,6 +190,8 @@ describe("BindingsPage", () => {
     fireEvent.click(await screen.findByRole("button", { name: "重新计算绑定" }));
     expect(await screen.findByText("重新计算绑定失败")).toBeInTheDocument();
     expect(await screen.findByText(/令牌数=5，代理数=1，单代理上限=2/)).toBeInTheDocument();
+    expect(await screen.findByText(/权重和=1/)).toBeInTheDocument();
+    expect(await screen.findByText(/总容量=2/)).toBeInTheDocument();
     expect(await screen.findByText(/请求ID:\s*req_capacity_1/)).toBeInTheDocument();
 
     fireEvent.click(await screen.findByRole("button", { name: "继续计算（允许超出容量）" }));

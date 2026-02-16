@@ -57,10 +57,10 @@ def _compute_primary_assignments(
     *,
     token_ids: list[int],
     proxy_ids: list[int],
-    max_tokens_per_proxy: int,
+    capacity_by_proxy_id: dict[int, int],
     salt: str,
 ) -> dict[int, int]:
-    remaining = {pid: int(max_tokens_per_proxy) for pid in proxy_ids}
+    remaining = {pid: int(capacity_by_proxy_id.get(int(pid), 0)) for pid in proxy_ids}
     out: dict[int, int] = {}
     for token_id in token_ids:
         for pid in _rendezvous_proxy_order(token_id=token_id, proxy_ids=proxy_ids, salt=salt):
@@ -75,13 +75,13 @@ def _compute_primary_assignments_soft(
     *,
     token_ids: list[int],
     proxy_ids: list[int],
-    max_tokens_per_proxy: int,
+    capacity_by_proxy_id: dict[int, int],
     salt: str,
 ) -> tuple[dict[int, int], int]:
     out = _compute_primary_assignments(
         token_ids=token_ids,
         proxy_ids=proxy_ids,
-        max_tokens_per_proxy=max_tokens_per_proxy,
+        capacity_by_proxy_id=capacity_by_proxy_id,
         salt=salt,
     )
 
@@ -264,7 +264,7 @@ async def recompute_bindings(
             proxy_ids = (
                 (
                     await session.execute(
-                        sa.select(ProxyPoolEndpoint.endpoint_id)
+                        sa.select(ProxyPoolEndpoint.endpoint_id, ProxyPoolEndpoint.weight)
                         .join(ProxyEndpoint, ProxyEndpoint.id == ProxyPoolEndpoint.endpoint_id)
                         .where(ProxyPoolEndpoint.pool_id == pool_id)
                         .where(ProxyPoolEndpoint.enabled == 1)
@@ -272,10 +272,28 @@ async def recompute_bindings(
                         .order_by(ProxyPoolEndpoint.endpoint_id.asc())
                     )
                 )
-                .scalars()
                 .all()
             )
-            if not proxy_ids:
+
+            proxies: list[tuple[int, int]] = []
+            for endpoint_id, weight in proxy_ids:
+                try:
+                    eid = int(endpoint_id)
+                except Exception:
+                    continue
+                try:
+                    w = int(weight or 0)
+                except Exception:
+                    w = 0
+                if eid <= 0:
+                    continue
+                proxies.append((eid, w))
+
+            capacity_by_proxy_id = {pid: int(max_tokens_per_proxy) * max(0, int(w)) for pid, w in proxies}
+            proxy_ids_norm = [pid for pid, _w in proxies if capacity_by_proxy_id.get(pid, 0) > 0]
+            weight_sum = sum(max(0, int(w)) for _pid, w in proxies if int(_pid) in set(proxy_ids_norm))
+
+            if not proxy_ids_norm:
                 raise ApiError(code=ErrorCode.BAD_REQUEST, message="No enabled proxies in pool", status_code=400)
 
             token_ids = (
@@ -286,7 +304,7 @@ async def recompute_bindings(
             if not token_ids:
                 return {"ok": True, "pool_id": str(pool_id), "recomputed": 0, "request_id": rid}
 
-            capacity = len(proxy_ids) * max_tokens_per_proxy
+            capacity = sum(int(capacity_by_proxy_id.get(int(pid), 0)) for pid in proxy_ids_norm)
             if strict and len(token_ids) > capacity:
                 raise ApiError(
                     code=ErrorCode.BAD_REQUEST,
@@ -294,8 +312,10 @@ async def recompute_bindings(
                     status_code=400,
                     details={
                         "token_count": len(token_ids),
-                        "proxy_count": len(proxy_ids),
+                        "proxy_count": len(proxy_ids_norm),
                         "max_tokens_per_proxy": max_tokens_per_proxy,
+                        "weight_sum": int(weight_sum),
+                        "capacity": int(capacity),
                     },
                 )
 
@@ -304,15 +324,15 @@ async def recompute_bindings(
             if strict:
                 assignments = _compute_primary_assignments(
                     token_ids=token_ids,
-                    proxy_ids=proxy_ids,
-                    max_tokens_per_proxy=max_tokens_per_proxy,
+                    proxy_ids=proxy_ids_norm,
+                    capacity_by_proxy_id=capacity_by_proxy_id,
                     salt=salt,
                 )
             else:
                 assignments, over_capacity_assigned = _compute_primary_assignments_soft(
                     token_ids=token_ids,
-                    proxy_ids=proxy_ids,
-                    max_tokens_per_proxy=max_tokens_per_proxy,
+                    proxy_ids=proxy_ids_norm,
+                    capacity_by_proxy_id=capacity_by_proxy_id,
                     salt=salt,
                 )
 
@@ -345,8 +365,9 @@ async def recompute_bindings(
                     "over_capacity_assigned": int(over_capacity_assigned),
                     "capacity": int(capacity),
                     "token_count": len(token_ids),
-                    "proxy_count": len(proxy_ids),
+                    "proxy_count": len(proxy_ids_norm),
                     "max_tokens_per_proxy": int(max_tokens_per_proxy),
+                    "weight_sum": int(weight_sum),
                 }
             )
         return resp

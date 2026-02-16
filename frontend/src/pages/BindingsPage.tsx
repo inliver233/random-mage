@@ -276,9 +276,14 @@ export function BindingsPage() {
                 const tokenCount = details && typeof details.token_count === "number" ? details.token_count : null;
                 const proxyCount = details && typeof details.proxy_count === "number" ? details.proxy_count : null;
                 const maxPer = details && typeof details.max_tokens_per_proxy === "number" ? details.max_tokens_per_proxy : null;
+                const weightSum = details && typeof details.weight_sum === "number" ? details.weight_sum : null;
+                const capacity = details && typeof details.capacity === "number" ? details.capacity : null;
                 const parts = [msg];
                 if (tokenCount !== null && proxyCount !== null && maxPer !== null) {
-                  parts.push(`令牌数=${tokenCount}，代理数=${proxyCount}，单代理上限=${maxPer}`);
+                  const extra = [`令牌数=${tokenCount}，代理数=${proxyCount}，单代理上限=${maxPer}`];
+                  if (weightSum !== null) extra.push(`权重和=${weightSum}`);
+                  if (capacity !== null) extra.push(`总容量=${capacity}`);
+                  parts.push(extra.join("，"));
                 }
                 if (rid) parts.push(`请求ID: ${rid}`);
                 return parts.filter((p) => String(p || "").trim()).join("；");
