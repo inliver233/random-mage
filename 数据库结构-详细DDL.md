@@ -99,6 +99,11 @@ CREATE TABLE IF NOT EXISTS images (
   title              TEXT,
   created_at_pixiv   TEXT,
 
+  -- 热度（来自 Pixiv App API illust/detail 的 total_*）
+  bookmark_count     INTEGER,
+  view_count         INTEGER,
+  comment_count      INTEGER,
+
   status             INTEGER NOT NULL DEFAULT 1,
   fail_count         INTEGER NOT NULL DEFAULT 0,
   last_fail_at       TEXT,
@@ -444,4 +449,3 @@ SQLite 下多对多筛选推荐两种方案：
 2) `alembic upgrade head`
 3) 启动服务
 4) 跑健康检查与一组回归（/version /healthz /random?format=json）
-
