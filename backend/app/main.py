@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 
 from fastapi import FastAPI, Request
@@ -19,7 +20,10 @@ from app.core.errors import ApiError, json_error_response
 from app.core.logging import configure_logging
 from app.core.metrics import observe_random_result
 from app.core.request_id import build_request_id_middleware, get_or_create_request_id, set_request_id_on_state
+from app.core.security import decode_jwt, parse_bearer_token
 from app.db.engine import create_engine
+from app.db.models.admin_audit import AdminAudit
+from app.db.session import create_sessionmaker, with_sqlite_busy_retry
 from app.web.admin_ui import mount_admin_ui
 
 
@@ -86,6 +90,82 @@ def create_app() -> FastAPI:
         request.state.api_key_id = int(api_key_id)
 
         return await call_next(request)
+
+    def _best_effort_admin_actor(request: Request) -> str | None:
+        authorization = request.headers.get("Authorization") or request.headers.get("authorization")
+        token = parse_bearer_token(authorization)
+        if not token:
+            return None
+        try:
+            claims = decode_jwt(token, secret_key=str(settings.secret_key))
+        except Exception:
+            return None
+        sub = str(claims.get("sub") or "").strip()
+        return sub or None
+
+    def _best_effort_client_ip(request: Request) -> str | None:
+        xff = request.headers.get("X-Forwarded-For") or request.headers.get("x-forwarded-for")
+        if xff:
+            ip = str(xff).split(",", 1)[0].strip()
+            return ip or None
+        client = getattr(request, "client", None)
+        host = getattr(client, "host", None) if client is not None else None
+        return str(host).strip() if host else None
+
+    @app.middleware("http")
+    async def _admin_audit_middleware(request: Request, call_next):  # type: ignore[no-redef]
+        path = request.url.path
+        method = (request.method or "").upper()
+
+        response = await call_next(request)
+
+        if not path.startswith("/admin/api/"):
+            return response
+        if method in {"GET", "HEAD", "OPTIONS"}:
+            return response
+
+        try:
+            status_code = int(getattr(response, "status_code", 0) or 0)
+        except Exception:
+            status_code = 0
+        if status_code >= 400:
+            return response
+
+        try:
+            rid = get_or_create_request_id(request)
+            actor = _best_effort_admin_actor(request)
+            ip = _best_effort_client_ip(request)
+            user_agent = request.headers.get("User-Agent") or request.headers.get("user-agent")
+
+            segments = [seg for seg in path.split("/") if seg]
+            record_id = next((seg for seg in reversed(segments) if seg.isdigit()), None)
+
+            detail_json = {"status": status_code, "query": dict(request.query_params)}
+
+            engine = request.app.state.engine
+            Session = create_sessionmaker(engine)
+
+            async def _op() -> None:
+                async with Session() as session:
+                    session.add(
+                        AdminAudit(
+                            actor=actor,
+                            action=method,
+                            resource=path,
+                            record_id=str(record_id) if record_id else None,
+                            request_id=str(rid),
+                            ip=ip,
+                            user_agent=str(user_agent) if user_agent else None,
+                            detail_json=json.dumps(detail_json, ensure_ascii=False, separators=(",", ":")),
+                        )
+                    )
+                    await session.commit()
+
+            await with_sqlite_busy_retry(_op)
+        except Exception:
+            pass
+
+        return response
 
     def _random_result_from_status(status: int) -> str:
         if status in {200, 301, 302, 303, 307, 308}:
