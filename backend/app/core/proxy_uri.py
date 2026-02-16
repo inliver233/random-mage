@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from urllib.parse import unquote
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,8 +82,8 @@ def parse_proxy_uri(uri: str) -> ProxyUriParts:
         if ":" not in userinfo:
             raise ValueError("invalid userinfo")
         username, password = userinfo.split(":", 1)
-        username = username.strip()
-        password = password
+        username = unquote(username.strip())
+        password = unquote(password)
         if not username:
             raise ValueError("invalid userinfo")
     else:
@@ -97,4 +98,3 @@ def parse_proxy_uri(uri: str) -> ProxyUriParts:
         username=username,
         password=password,
     )
-
