@@ -597,7 +597,7 @@ async def random_image(
 
     raise ApiError(
         code=ErrorCode.UPSTREAM_STREAM_ERROR,
-        message="Upstream request failed after attempts.",
+        message="多次尝试后上游请求仍失败。",
         status_code=502,
         details={
             "attempts_used": len(tried_ids),

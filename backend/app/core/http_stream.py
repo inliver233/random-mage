@@ -44,18 +44,18 @@ async def stream_url(
         if "407" in msg or "proxy authentication" in msg:
             raise ApiError(
                 code=ErrorCode.PROXY_AUTH_FAILED,
-                message="Proxy authentication failed",
+                message="代理认证失败",
                 status_code=502,
             ) from exc
         raise ApiError(
             code=ErrorCode.PROXY_CONNECT_FAILED,
-            message="Proxy connect failed",
+            message="代理连接失败",
             status_code=502,
         ) from exc
     except Exception as exc:
         UPSTREAM_STREAM_ERRORS_TOTAL.inc()
         await client.aclose()
-        raise ApiError(code=ErrorCode.UPSTREAM_STREAM_ERROR, message="Upstream request failed", status_code=502) from exc
+        raise ApiError(code=ErrorCode.UPSTREAM_STREAM_ERROR, message="上游请求失败", status_code=502) from exc
 
     if upstream.status_code not in {200, 206}:
         status = upstream.status_code
@@ -63,12 +63,12 @@ async def stream_url(
         await upstream.aclose()
         await client.aclose()
         if status == 403:
-            raise ApiError(code=ErrorCode.UPSTREAM_403, message="Upstream forbidden", status_code=502)
+            raise ApiError(code=ErrorCode.UPSTREAM_403, message="上游拒绝访问（403）", status_code=502)
         if status == 404:
-            raise ApiError(code=ErrorCode.UPSTREAM_404, message="Upstream not found", status_code=502)
+            raise ApiError(code=ErrorCode.UPSTREAM_404, message="上游资源不存在（404）", status_code=502)
         if status == 429:
-            raise ApiError(code=ErrorCode.UPSTREAM_RATE_LIMIT, message="Upstream rate limited", status_code=502)
-        raise ApiError(code=ErrorCode.UPSTREAM_STREAM_ERROR, message="Upstream error", status_code=502)
+            raise ApiError(code=ErrorCode.UPSTREAM_RATE_LIMIT, message="上游触发限流（429）", status_code=502)
+        raise ApiError(code=ErrorCode.UPSTREAM_STREAM_ERROR, message="上游错误", status_code=502)
 
     media_type = upstream.headers.get("content-type") or "application/octet-stream"
     content_length = upstream.headers.get("content-length")

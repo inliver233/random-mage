@@ -16,8 +16,8 @@ from app.api.public.tags import router as tags_router
 from app.api.public.version import router as version_router
 from app.core.config import load_settings
 from app.core.api_keys import ApiKeyAuthConfig, ApiKeyAuthenticator, ApiKeyRateLimiter, require_public_api_key
-from app.core.errors import ApiError, json_error_response
-from app.core.logging import configure_logging
+from app.core.errors import ApiError, ErrorCode, json_error_response
+from app.core.logging import configure_logging, get_logger
 from app.core.metrics import observe_random_result
 from app.core.request_id import build_request_id_middleware, get_or_create_request_id, set_request_id_on_state
 from app.core.security import decode_jwt, parse_bearer_token
@@ -25,6 +25,8 @@ from app.db.engine import create_engine
 from app.db.models.admin_audit import AdminAudit
 from app.db.session import create_sessionmaker, with_sqlite_busy_retry
 from app.web.admin_ui import mount_admin_ui
+
+log = get_logger(__name__)
 
 
 def create_app() -> FastAPI:
@@ -41,6 +43,20 @@ def create_app() -> FastAPI:
             status_code=exc.status_code,
             request=request,
             details=exc.details,
+        )
+
+    @app.exception_handler(Exception)
+    async def _unhandled_exception_handler(request: Request, exc: Exception):  # type: ignore[no-redef]
+        try:
+            log.exception("unhandled_exception path=%s", str(getattr(request, "url", "")))
+        except Exception:
+            pass
+        return json_error_response(
+            code=ErrorCode.INTERNAL_ERROR,
+            message="服务器内部错误",
+            status_code=500,
+            request=request,
+            details={"error_type": type(exc).__name__},
         )
 
     request_id_middleware = build_request_id_middleware()
