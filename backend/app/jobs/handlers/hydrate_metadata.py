@@ -47,6 +47,10 @@ class _IllustPage:
     ext: str
 
 
+class TokenDisabledError(RuntimeError):
+    pass
+
+
 def _parse_payload(payload_json: str) -> dict[str, Any]:
     try:
         data = json.loads(payload_json)
@@ -482,7 +486,16 @@ LIMIT 1;
             row = await session.get(PixivToken, int(token_id))
             if row is None:
                 raise JobPermanentError("Token not found")
+            if not bool(row.enabled):
+                raise TokenDisabledError("Token disabled")
             return encryptor.decrypt_text(str(row.refresh_token_enc))
+
+    async def _is_token_enabled(token_id: int) -> bool:
+        async with Session() as session:
+            row = await session.get(PixivToken, int(token_id))
+            if row is None:
+                raise JobPermanentError("Token not found")
+            return bool(row.enabled)
 
     async def _mark_token_backoff(
         token_id: int,
@@ -556,7 +569,12 @@ LIMIT 1;
         await with_sqlite_busy_retry(_op)
 
     async def _get_access_token(token_id: int, *, now_dt: datetime, runtime: RuntimeConfig) -> str:
+        if not await _is_token_enabled(int(token_id)):
+            raise TokenDisabledError("Token disabled")
+
         async def refresher() -> Any:
+            if not await _is_token_enabled(int(token_id)):
+                raise TokenDisabledError("Token disabled")
             refresh_token = await _get_refresh_token(token_id)
             proxy_uri = None
             oauth_url = oauth_config.base_url.rstrip("/") + OAUTH_TOKEN_PATH
@@ -582,6 +600,9 @@ LIMIT 1;
             return token
 
         token = await token_cache.get_or_refresh(token_id, refresher=refresher)
+        if not await _is_token_enabled(int(token_id)):
+            token_cache.invalidate(token_id)
+            raise TokenDisabledError("Token disabled")
         return str(token.access_token)
 
     async def _fetch_illust_detail(
@@ -773,6 +794,9 @@ LIMIT 1;
 
             try:
                 access_token = await _get_access_token(token_id, now_dt=now_dt, runtime=runtime)
+            except TokenDisabledError as exc:
+                last_exc = exc
+                continue
             except PixivOauthError as exc:
                 TOKEN_REFRESH_FAIL_TOTAL.inc()
                 attempt = 0

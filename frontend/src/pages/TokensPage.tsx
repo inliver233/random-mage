@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, Card, Form, Input, InputNumber, Modal, Skeleton, Space, Switch, Table, Typography } from "antd";
+import { Alert, Button, Card, Form, Input, InputNumber, Modal, Popconfirm, Skeleton, Space, Switch, Table, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import React from "react";
 
@@ -42,6 +42,12 @@ type UpdateTokenResponse = {
   request_id: string;
 };
 
+type DeleteTokenResponse = {
+  ok: true;
+  token_id: string;
+  request_id: string;
+};
+
 type TestRefreshResponse = {
   ok: true;
   expires_in: number;
@@ -72,9 +78,11 @@ const columns = (actions: {
   onTestRefresh: (id: string) => void;
   onResetFailures: (id: string) => void;
   onToggleEnabled: (row: TokenItem) => void;
+  onDelete: (id: string) => void;
   testPendingId: string | null;
   resetPendingId: string | null;
   updatePendingId: string | null;
+  deletePendingId: string | null;
 }): ColumnsType<TokenItem> => [
   { title: "标签", dataIndex: "label", key: "label" },
   { title: "启用", dataIndex: "enabled", key: "enabled", render: (value) => (value ? "是" : "否") },
@@ -101,6 +109,17 @@ const columns = (actions: {
         <Button size="small" onClick={() => actions.onResetFailures(row.id)} loading={actions.resetPendingId === row.id}>
           重置失败计数
         </Button>
+        <Popconfirm
+          title={`确定删除令牌 #${row.id}？`}
+          okText="删除"
+          cancelText="取消"
+          okButtonProps={{ danger: true }}
+          onConfirm={() => actions.onDelete(row.id)}
+        >
+          <Button size="small" danger loading={actions.deletePendingId === row.id}>
+            删除
+          </Button>
+        </Popconfirm>
       </Space>
     ),
   },
@@ -227,6 +246,28 @@ export function TokensPage() {
     onError: (err) => {
       setActionErrorMessage(messageFromError(err));
       setActionErrorRequestId(requestIdFromError(err));
+    },
+  });
+
+  const deleteToken = useMutation({
+    mutationFn: (tokenId: string) =>
+      apiJson<DeleteTokenResponse>(`/admin/api/tokens/${encodeURIComponent(tokenId)}`, { method: "DELETE" }),
+    onMutate: () => {
+      setActionMessage(null);
+      setActionRequestId(null);
+      setActionErrorMessage(null);
+      setActionErrorRequestId(null);
+    },
+    onSuccess: (data) => {
+      setActionMessage(`令牌已删除：${data.token_id}`);
+      setActionRequestId(data.request_id);
+      queryClient.invalidateQueries({ queryKey: ["admin", "tokens"] });
+      queryClient.invalidateQueries({ queryKey: ["admin", "bindings"] });
+    },
+    onError: (err) => {
+      setActionErrorMessage(messageFromError(err));
+      setActionErrorRequestId(requestIdFromError(err));
+      queryClient.invalidateQueries({ queryKey: ["admin", "tokens"] });
     },
   });
 
@@ -399,9 +440,11 @@ export function TokensPage() {
                   tokenId: row.id,
                   body: { enabled: !row.enabled },
                 }),
+              onDelete: (id) => deleteToken.mutate(id),
               testPendingId: testRefresh.isPending ? testRefresh.variables ?? null : null,
               resetPendingId: resetFailures.isPending ? resetFailures.variables ?? null : null,
               updatePendingId: updateToken.isPending ? updateToken.variables?.tokenId ?? null : null,
+              deletePendingId: deleteToken.isPending ? deleteToken.variables ?? null : null,
             })}
             dataSource={query.data.items}
             pagination={false}

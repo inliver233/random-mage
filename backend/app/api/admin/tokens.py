@@ -14,7 +14,8 @@ from app.core.request_id import get_or_create_request_id
 from app.core.runtime_settings import load_runtime_config
 from app.core.time import iso_utc_ms
 from app.db.models.pixiv_tokens import PixivToken
-from app.db.session import create_sessionmaker
+from app.db.models.token_proxy_bindings import TokenProxyBinding
+from app.db.session import create_sessionmaker, with_sqlite_busy_retry
 from app.pixiv.oauth import OAUTH_TOKEN_PATH, PixivOauthConfig, PixivOauthError, refresh_access_token
 from app.pixiv.refresh_backoff import refresh_backoff_seconds
 
@@ -246,6 +247,36 @@ async def update_token(
         await session.commit()
 
     return {"ok": True, "token_id": str(token_id), "request_id": rid}
+
+
+@router.delete("/tokens/{token_id}")
+async def delete_token(
+    token_id: int,
+    request: Request,
+    _claims: dict[str, Any] = Depends(get_admin_claims),
+) -> dict[str, Any]:
+    _ = _claims
+    if token_id <= 0:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid token id", status_code=400)
+
+    rid = get_or_create_request_id(request)
+
+    engine = request.app.state.engine
+    Session = create_sessionmaker(engine)
+
+    async def _op() -> dict[str, Any]:
+        async with Session() as session:
+            row = await session.get(PixivToken, token_id)
+            if row is None:
+                raise ApiError(code=ErrorCode.NOT_FOUND, message="Token not found", status_code=404)
+
+            await session.execute(sa.delete(TokenProxyBinding).where(TokenProxyBinding.token_id == int(token_id)))
+            await session.delete(row)
+            await session.commit()
+
+        return {"ok": True, "token_id": str(token_id), "request_id": rid}
+
+    return await with_sqlite_busy_retry(_op)
 
 
 @router.post("/tokens/{token_id}/test-refresh")
