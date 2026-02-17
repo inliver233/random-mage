@@ -67,6 +67,8 @@ describe("ImagesPage", () => {
 
     expect(await screen.findByText("图片管理")).toBeInTheDocument();
     expect(await screen.findByText("111")).toBeInTheDocument();
+    expect(await screen.findByText("N")).toBeInTheDocument();
+    expect(await screen.findByText("Y")).toBeInTheDocument();
     expect(await screen.findByText(/请求ID:\s*req_images/)).toBeInTheDocument();
   });
 });
