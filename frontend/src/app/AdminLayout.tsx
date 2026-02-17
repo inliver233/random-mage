@@ -1,6 +1,9 @@
-import { Button, Layout, Menu, Space, Typography } from "antd";
+import { useQuery } from "@tanstack/react-query";
+import { Button, Layout, Menu, Popover, Space, Typography } from "antd";
 import React from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
+
+import { apiJson } from "../api/client";
 
 type NavItem = { key: string; label: string };
 
@@ -29,11 +32,35 @@ function pickSelectedKey(pathname: string): string {
   return "/admin";
 }
 
+type VersionResponse = {
+  ok: true;
+  version: string;
+  build_time: string;
+  git_commit: string;
+  request_id: string;
+};
+
 export function AdminLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const isRoot = location.pathname === "/admin" || location.pathname === "/admin/";
   const selectedKey = pickSelectedKey(location.pathname);
+
+  const version = useQuery({
+    queryKey: ["public", "version"],
+    queryFn: () => apiJson<VersionResponse>("/version"),
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
+
+  const versionText = (() => {
+    if (version.isLoading) return "版本: 加载中…";
+    if (version.isError || !version.data) return "版本: （获取失败）";
+    const commitRaw = String(version.data.git_commit || "").trim();
+    const commitShort = commitRaw ? commitRaw.slice(0, 7) : "";
+    const ver = String(version.data.version || "").trim() || "（未知）";
+    return commitShort ? `版本: ${ver} (${commitShort})` : `版本: ${ver}`;
+  })();
 
   return (
     <Layout style={{ minHeight: "100vh" }}>
@@ -54,16 +81,40 @@ export function AdminLayout() {
 
       <Layout>
         <Layout.Header style={{ background: "#fff", padding: "0 24px" }}>
-          <Space align="center" style={{ height: 64 }}>
-            {!isRoot ? (
-              <Button size="small" onClick={() => navigate(-1)}>
-                返回
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", height: 64 }}>
+            <Space align="center">
+              {!isRoot ? (
+                <Button size="small" onClick={() => navigate(-1)}>
+                  返回
+                </Button>
+              ) : null}
+              <Button size="small" onClick={() => navigate("/admin")}>
+                主页
               </Button>
-            ) : null}
-            <Button size="small" onClick={() => navigate("/admin")}>
-              主页
-            </Button>
-          </Space>
+            </Space>
+
+            <Space align="center">
+              <Typography.Text type="secondary">{versionText}</Typography.Text>
+              <Popover
+                title="升级提示"
+                content={
+                  <div style={{ maxWidth: 420 }}>
+                    <div>如果你更新了代码但页面还是旧的，通常是因为没有重建镜像。</div>
+                    <div>
+                      请在部署目录执行：<Typography.Text code>docker compose up -d --build</Typography.Text>
+                    </div>
+                    <div style={{ marginTop: 8 }}>
+                      {version.data?.request_id ? (
+                        <Typography.Text type="secondary">请求ID: {version.data.request_id}</Typography.Text>
+                      ) : null}
+                    </div>
+                  </div>
+                }
+              >
+                <Button size="small">升级提示</Button>
+              </Popover>
+            </Space>
+          </div>
         </Layout.Header>
         <Layout.Content style={{ padding: 24 }}>
           <Outlet />
