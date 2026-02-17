@@ -31,6 +31,8 @@ describe("ProxiesPage", () => {
                 {
                   id: "1",
                   uri_masked: "http://***:***@1.2.3.4:8080",
+                  source: "manual",
+                  source_ref: null,
                   enabled: endpointEnabled,
                   latency_ms: 123,
                   status: "ok",

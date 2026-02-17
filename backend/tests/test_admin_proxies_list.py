@@ -30,16 +30,28 @@ def test_admin_list_proxy_endpoints_does_not_echo_password(tmp_path: Path, monke
 
         Session = create_sessionmaker(app.state.engine)
         async with Session() as session:
-            session.add(
-                ProxyEndpoint(
-                    scheme="http",
-                    host="1.2.3.4",
-                    port=8080,
-                    username="u",
-                    password_enc="enc_dummy",
-                    enabled=1,
-                    source="manual",
-                )
+            session.add_all(
+                [
+                    ProxyEndpoint(
+                        scheme="http",
+                        host="1.2.3.4",
+                        port=8080,
+                        username="u",
+                        password_enc="enc_dummy",
+                        enabled=1,
+                        source="manual",
+                    ),
+                    ProxyEndpoint(
+                        scheme="http",
+                        host="9.9.9.9",
+                        port=2323,
+                        username="inliver",
+                        password_enc="enc_dummy2",
+                        enabled=1,
+                        source="easy_proxies",
+                        source_ref="http://user:pw_secret@easy.test:15666",
+                    ),
+                ]
             )
             await session.commit()
 
@@ -58,9 +70,17 @@ def test_admin_list_proxy_endpoints_does_not_echo_password(tmp_path: Path, monke
         assert body["ok"] is True
         assert body["request_id"] == "req_test"
         assert resp.headers["X-Request-Id"] == "req_test"
-        assert len(body["items"]) == 1
+        assert len(body["items"]) == 2
 
         dumped = json.dumps(body, ensure_ascii=False)
         assert "enc_dummy" not in dumped
+        assert "enc_dummy2" not in dumped
         assert "password" not in dumped
+        assert "pw_secret" not in dumped
 
+        items = body["items"]
+        assert all("source" in item for item in items)
+        assert all("source_ref" in item for item in items)
+
+        easy = next(i for i in items if i["source"] == "easy_proxies")
+        assert easy["source_ref"] == "http://easy.test:15666"

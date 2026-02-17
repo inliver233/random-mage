@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from urllib.parse import urlparse, urlunparse
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Request
@@ -37,6 +38,30 @@ def _mask_proxy_uri(*, scheme: str, host: str, port: int, username: str, passwor
             auth = f"{username}:***@"
 
     return f"{scheme}://{auth}{host}:{int(port)}"
+
+
+def _sanitize_source_ref(value: str | None) -> str | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+
+    try:
+        parsed = urlparse(raw)
+    except Exception:
+        return raw[:200]
+
+    if not parsed.scheme or not parsed.netloc:
+        return raw[:200]
+
+    host = parsed.hostname
+    if not host:
+        return raw[:200]
+
+    port = parsed.port
+    netloc = f"{host}:{int(port)}" if port else host
+    path = parsed.path or ""
+
+    return urlunparse((parsed.scheme, netloc, path, "", "", ""))
 
 
 @router.get("/proxies/endpoints")
@@ -127,6 +152,8 @@ async def list_proxy_endpoints(
         {
             "id": str(p.id),
             "enabled": bool(p.enabled),
+            "source": str(p.source or "manual"),
+            "source_ref": _sanitize_source_ref(p.source_ref),
             "uri_masked": _mask_proxy_uri(
                 scheme=str(p.scheme),
                 host=str(p.host),

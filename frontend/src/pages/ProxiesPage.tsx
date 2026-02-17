@@ -8,6 +8,8 @@ import { ApiError, apiJson } from "../api/client";
 type ProxyEndpointItem = {
   id: string;
   uri_masked: string;
+  source: string;
+  source_ref: string | null;
   enabled: boolean;
   latency_ms: number | null;
   status: string | null;
@@ -88,6 +90,30 @@ const columns = (actions: {
 }): ColumnsType<ProxyEndpointItem> => [
   { title: "节点ID", dataIndex: "id", key: "id" },
   { title: "代理地址（掩码）", dataIndex: "uri_masked", key: "uri_masked" },
+  {
+    title: "来源",
+    dataIndex: "source",
+    key: "source",
+    render: (value: string) => {
+      const v = String(value || "").trim();
+      if (v === "manual") return "手动";
+      if (v === "easy_proxies") return "easy-proxies";
+      return v || "-";
+    },
+  },
+  {
+    title: "来源引用",
+    dataIndex: "source_ref",
+    key: "source_ref",
+    render: (value: string | null) =>
+      value ? (
+        <Typography.Text code copyable={{ text: String(value || "") }}>
+          {String(value || "")}
+        </Typography.Text>
+      ) : (
+        "-"
+      ),
+  },
   { title: "启用", dataIndex: "enabled", key: "enabled", render: (value) => (value ? "是" : "否") },
   {
     title: "状态",
@@ -364,8 +390,10 @@ export function ProxiesPage() {
               <div>1) “面板地址”填 easy-proxies 的 Web/API 地址（不是导出的代理地址）。</div>
               <div>2) “访问密码”是面板登录密码；代理账号/密码来自导出的代理 URI。</div>
               <div>3) 若代理密码包含“@”，导出的 URI 可能形如 `http://user:pass@123@host:2323`（多个 @ 属正常）；也支持 `%40` 编码写法。</div>
-              <div>4) pool 模式会导出大量重复入口：这是“单入口代理池”。若要每节点独立端口，请在 easy-proxies 启用 multi-port 或 hybrid 模式。</div>
-              <div>5) 使用 pool 模式时，可在“代理池”页面把该入口的成员权重设置为节点数，以贴近真实容量与绑定容量。</div>
+              <div>4) 单入口 pool：你通常只会看到 1 个端口（例如 2323），该端口在 easy-proxies 内部轮换节点，本项目无法直接展示 pool 内部实际命中的端口。</div>
+              <div>5) multi-port：你会看到很多不同端口（例如 24004/24005/...），每个端口就是一个独立节点；可在本项目侧探测并禁用不稳定节点。</div>
+              <div>6) hybrid：可能同时存在 pool 入口与 multi-port 节点，建议优先导入 multi-port 节点以便精细管理。</div>
+              <div>7) 使用单入口 pool 时，可在“代理池”页面把该入口的成员权重设置为节点数，以贴近真实容量与绑定容量。</div>
             </div>
           }
           style={{ marginBottom: 12 }}
@@ -420,6 +448,13 @@ export function ProxiesPage() {
       </Card>
 
       <Card title="代理节点列表">
+        <Alert
+          type="info"
+          showIcon
+          message="提示"
+          description="列表中每一行代表一个实际可用的代理入口（host:port）。若只看到 1 个端口，通常表示你导入的是单入口 pool；multi-port/hybrid 会出现多个不同端口节点。"
+          style={{ marginBottom: 12 }}
+        />
         <Space wrap style={{ marginBottom: 12 }}>
           <Button type="primary" onClick={() => probe.mutate()} loading={probe.isPending}>
             启动健康探测任务
