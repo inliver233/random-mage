@@ -164,14 +164,14 @@ describe("BindingsPage", () => {
 
     expect(await screen.findByText(/已设置覆盖代理：绑定 #1 → 节点 #11/)).toBeInTheDocument();
     expect(await screen.findByText(/请求ID:\s*req_override/)).toBeInTheDocument();
-    expect((await screen.findAllByText("http://9.9.9.9:8080")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText(/9\.9\.9\.9:8080/)).length).toBeGreaterThan(0);
 
     fireEvent.click(await screen.findByRole("button", { name: "清除覆盖" }));
     expect(await screen.findByText(/已清除覆盖代理：绑定 #1/)).toBeInTheDocument();
     expect(await screen.findByText(/请求ID:\s*req_clear/)).toBeInTheDocument();
 
     await waitFor(() => {
-      expect(screen.queryAllByText("http://9.9.9.9:8080")).toHaveLength(0);
+      expect(screen.queryAllByText(/9\.9\.9\.9:8080/)).toHaveLength(0);
     });
   });
 

@@ -74,7 +74,7 @@ function formatProxy(proxy: ProxyRef | null): string {
   const host = String(proxy.host || "").includes(":") && !String(proxy.host || "").startsWith("[") ? `[${proxy.host}]` : proxy.host;
   const user = String(proxy.username || "").trim();
   const auth = user ? `${user}@` : "";
-  return `${proxy.scheme}://${auth}${host}:${proxy.port}`;
+  return `节点#${proxy.id} ${proxy.scheme}://${auth}${host}:${proxy.port}`;
 }
 
 function modeLabel(mode: "primary" | "override"): string {
@@ -238,6 +238,13 @@ export function BindingsPage() {
       <Typography.Title level={3} style={{ margin: 0 }}>
         令牌与代理绑定
       </Typography.Title>
+
+      <Alert
+        type="info"
+        showIcon
+        message="提示"
+        description="这里显示的是“本项目侧的代理入口（host:port）”。如果你导入的是 easy-proxies 单入口 pool，你只会看到 pool 入口端口（例如 2323）；pool 内部实际命中的节点端口需要在 easy-proxies 面板查看。"
+      />
 
       {actionMessage ? <Alert type="success" showIcon message={actionMessage} /> : null}
       {actionRequestId ? <Typography.Text type="secondary">请求ID: {actionRequestId}</Typography.Text> : null}
