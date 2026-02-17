@@ -316,7 +316,7 @@ export function JobsPage() {
               </Descriptions.Item>
             </Descriptions>
 
-            <Card size="small" title="Payload（结构化）">
+            <Card size="small" title="任务参数（结构化）">
               <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
                 {JSON.stringify(jobDetail.data.item.payload, null, 2)}
               </pre>
