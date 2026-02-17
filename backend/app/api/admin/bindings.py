@@ -197,6 +197,28 @@ async def list_bindings(
             .all()
         )
 
+        counts = (
+            (
+                await session.execute(
+                    sa.select(
+                        sa.func.count(ProxyPoolEndpoint.endpoint_id),
+                        sa.func.sum(
+                            sa.case(
+                                (sa.and_(ProxyPoolEndpoint.enabled == 1, ProxyEndpoint.enabled == 1), 1),
+                                else_=0,
+                            )
+                        ),
+                    )
+                    .select_from(ProxyPoolEndpoint)
+                    .join(ProxyEndpoint, ProxyEndpoint.id == ProxyPoolEndpoint.endpoint_id)
+                    .where(ProxyPoolEndpoint.pool_id == int(pool_id))
+                )
+            )
+            .first()
+        )
+        endpoints_total = int(counts[0] or 0) if counts is not None else 0
+        endpoints_enabled = int(counts[1] or 0) if counts is not None else 0
+
     items: list[dict[str, Any]] = []
     for binding, token_label, pool_name, primary_proxy, override_proxy in rows:
         override_active = False
@@ -209,6 +231,8 @@ async def list_bindings(
         items.append(
             {
                 "id": str(binding.id),
+                "created_at": binding.created_at,
+                "updated_at": binding.updated_at,
                 "token": {"id": str(binding.token_id), "label": token_label},
                 "pool": {"id": str(binding.pool_id), "name": pool_name},
                 "primary_proxy": {
@@ -235,7 +259,16 @@ async def list_bindings(
             }
         )
 
-    return {"ok": True, "items": items, "request_id": rid}
+    return {
+        "ok": True,
+        "items": items,
+        "summary": {
+            "pool_id": str(pool_id),
+            "pool_endpoints_total": int(endpoints_total),
+            "pool_endpoints_enabled": int(endpoints_enabled),
+        },
+        "request_id": rid,
+    }
 
 
 @router.post("/bindings/recompute")

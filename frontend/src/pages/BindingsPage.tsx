@@ -16,6 +16,8 @@ type ProxyRef = {
 
 type BindingItem = {
   id: string;
+  created_at: string;
+  updated_at: string;
   token: { id: string; label: string | null };
   pool: { id: string; name: string };
   primary_proxy: ProxyRef;
@@ -28,6 +30,7 @@ type BindingItem = {
 type BindingsListResponse = {
   ok: true;
   items: BindingItem[];
+  summary?: { pool_id: string; pool_endpoints_total: number; pool_endpoints_enabled: number };
   request_id: string;
 };
 
@@ -81,6 +84,11 @@ function modeLabel(mode: "primary" | "override"): string {
   return mode === "override" ? "覆盖代理" : "主代理";
 }
 
+function stabilityLabel(row: BindingItem): string {
+  if (row.effective_mode === "override") return "固定（覆盖到期/清除会变）";
+  return "固定（重算会变）";
+}
+
 const columns = (actions: {
   onOpenOverride: (row: BindingItem) => void;
   onClearOverride: (row: BindingItem) => void;
@@ -103,6 +111,8 @@ const columns = (actions: {
     render: (_, row) => (row.effective_mode === "override" ? formatProxy(row.override_proxy) : formatProxy(row.primary_proxy)),
   },
   { title: "生效模式", dataIndex: "effective_mode", key: "effective_mode", render: (value) => modeLabel(value) },
+  { title: "固定性", key: "stability", render: (_, row) => stabilityLabel(row) },
+  { title: "绑定更新时间", dataIndex: "updated_at", key: "updated_at", render: (value) => value || "-" },
   { title: "主代理", key: "primary_proxy", render: (_, row) => formatProxy(row.primary_proxy) },
   { title: "覆盖代理", key: "override_proxy", render: (_, row) => formatProxy(row.override_proxy) || "-" },
   { title: "覆盖过期时间", dataIndex: "override_expires_at", key: "override_expires_at", render: (value) => value || "-" },
@@ -242,8 +252,23 @@ export function BindingsPage() {
       <Alert
         type="info"
         showIcon
-        message="提示"
-        description="这里显示的是“本项目侧的代理入口（host:port）”。如果你导入的是 easy-proxies 单入口 pool，你只会看到 pool 入口端口（例如 2323）；pool 内部实际命中的节点端口需要在 easy-proxies 面板查看。"
+        message="说明"
+        description={
+          (() => {
+            const summary = query.data?.summary;
+            const parts: string[] = [
+              "绑定默认是固定的：仅会在你点击“重新计算绑定”、设置覆盖、清除覆盖或覆盖到期后发生变化。",
+              "这里显示的是“本项目侧的代理入口（host:port）”。如果你导入的是 easy-proxies 单入口 pool，你只会看到 pool 入口端口（例如 2323）；pool 内部实际命中的节点端口需要在 easy-proxies 面板查看。",
+            ];
+            if (summary && typeof summary.pool_endpoints_total === "number" && typeof summary.pool_endpoints_enabled === "number") {
+              parts.push(`当前代理池入口：可用 ${summary.pool_endpoints_enabled}/${summary.pool_endpoints_total}。`);
+              if (summary.pool_endpoints_enabled === 1) {
+                parts.push("可用入口=1 时，所有令牌绑定到同一入口属于正常现象。");
+              }
+            }
+            return parts.join(" ");
+          })()
+        }
       />
 
       {actionMessage ? <Alert type="success" showIcon message={actionMessage} /> : null}
