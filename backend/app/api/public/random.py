@@ -47,11 +47,17 @@ def _quality_score(image: Any) -> float:
     height = _as_nonneg_int(getattr(image, "height", None))
     pixels = width * height if width > 0 and height > 0 else 0
 
+    rate_term = 0.0
+    if view_count > 0:
+        bookmark_rate_per_mille = (float(bookmark_count) / float(view_count)) * 1000.0
+        rate_term = math.log1p(max(0.0, bookmark_rate_per_mille))
+
     score = (
         4.0 * math.log1p(bookmark_count)
-        + 1.0 * math.log1p(view_count)
+        + 0.5 * math.log1p(view_count)
         + 2.0 * math.log1p(comment_count)
         + 1.0 * math.log1p(float(pixels) / 1_000_000.0)
+        + 3.0 * rate_term
     )
     return float(score)
 

@@ -38,6 +38,9 @@
 
 > “点赞”说明：Pixiv 存在点赞能力（官方帮助中心亦有说明），但在 App API 的 illust 对象中更稳定、可直接使用的公开数值字段通常是上述三项。本项目将以 `total_bookmarks` 作为“点赞/喜爱/收藏”的主要代理指标，并保留 view/comments 作为辅助特征。
 
+衍生指标（项目内部计算，不是 Pixiv 原始字段）：
+- `bookmark_rate`：收藏率（`bookmark_count / max(1, view_count)`，或按千分比缩放）。用于“质量随机 v2”中降低对纯浏览量的偏置。
+
 ### 2.2 清晰度/观感（辅助）
 - `width` / `height`：分辨率
 - `page_count`：页数（多图作品）
