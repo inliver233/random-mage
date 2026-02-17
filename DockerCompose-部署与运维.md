@@ -46,6 +46,49 @@ docker compose up -d --build
 
 > 本仓库的 Docker 镜像会在 build 时打包前端产物，并由 `api` 服务在 `/admin` 下直接托管；默认无需额外 `web` 服务。
 
+### 2.3 常用 Docker Compose 指令速查（建议收藏）
+
+> 下面以本仓库示例 `deploy/docker-compose.yml` 为准（也可以先 `cd deploy` 再省略 `-f`）。
+
+启动/更新（推荐；会重建镜像）：
+```bash
+docker compose -f deploy/docker-compose.yml up -d --build
+```
+
+查看运行状态：
+```bash
+docker compose -f deploy/docker-compose.yml ps
+```
+
+查看日志（跟随）：
+```bash
+docker compose -f deploy/docker-compose.yml logs -f api
+docker compose -f deploy/docker-compose.yml logs -f worker
+```
+
+重启服务（不重建镜像）：
+```bash
+docker compose -f deploy/docker-compose.yml restart api worker
+```
+
+停止服务（保留容器，稍后可 `start` 恢复）：
+```bash
+docker compose -f deploy/docker-compose.yml stop
+```
+
+下线/清理（移除容器与网络；不会删除宿主机 `data/`）：
+```bash
+docker compose -f deploy/docker-compose.yml down
+```
+
+强制重建（建议升级代码后使用；可同时拉取上游 base 镜像）：
+```bash
+docker compose -f deploy/docker-compose.yml build --pull
+docker compose -f deploy/docker-compose.yml up -d --force-recreate
+```
+
+> 重要提醒：如果你更新了代码但后台页面还是旧的，通常是因为**没有重建镜像**（前端静态资源在镜像构建阶段打包）。请使用 `docker compose up -d --build`。
+
 ### 2.2 生产建议布局（示例）
 
 宿主机目录（示例）：
