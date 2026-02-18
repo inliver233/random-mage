@@ -59,6 +59,7 @@ def test_admin_images_list_missing_filters_and_cursor(tmp_path: Path, monkeypatc
                 height=200,
                 x_restrict=0,
                 ai_type=0,
+                illust_type=0,
                 user_id=123,
                 user_name="u",
                 title="t",
@@ -116,6 +117,16 @@ def test_admin_images_list_missing_filters_and_cursor(tmp_path: Path, monkeypatc
         b2b = r2b.json()
         assert len(b2b["items"]) == 1
         assert int(b2b["items"][0]["id"]) == ids["img1"]
+
+        r2c = client.get(
+            "/admin/api/images",
+            params={"missing": "illust_type"},
+            headers={"Authorization": f"Bearer {token}", "X-Request-Id": "req_test"},
+        )
+        assert r2c.status_code == 200
+        b2c = r2c.json()
+        assert len(b2c["items"]) == 1
+        assert int(b2c["items"][0]["id"]) == ids["img1"]
 
         r3 = client.get(
             "/admin/api/images",

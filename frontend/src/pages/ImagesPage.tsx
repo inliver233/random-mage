@@ -17,6 +17,7 @@ type ImageItem = {
   orientation: number | null;
   x_restrict: number | null;
   ai_type: number | null;
+  illust_type: number | null;
   bookmark_count: number | null;
   view_count: number | null;
   comment_count: number | null;
@@ -54,6 +55,7 @@ const MISSING_LABELS: Record<string, string> = {
   geometry: "尺寸",
   r18: "R18",
   ai: "AI",
+  illust_type: "类型",
   user: "作者",
   title: "标题",
   created_at: "时间",
@@ -123,6 +125,13 @@ export function ImagesPage() {
       },
       { title: "R18", dataIndex: "x_restrict", key: "x_restrict", width: 70, render: (v) => (v == null ? "-" : Number(v) > 0 ? "Y" : "N") },
       { title: "AI", dataIndex: "ai_type", key: "ai_type", width: 60, render: (v) => (v == null ? "-" : Number(v) > 0 ? "Y" : "N") },
+      {
+        title: "类型",
+        dataIndex: "illust_type",
+        key: "illust_type",
+        width: 90,
+        render: (v) => (v == null ? "-" : Number(v) === 0 ? "插画" : Number(v) === 1 ? "漫画" : Number(v) === 2 ? "动图" : String(v)),
+      },
       { title: "收藏", dataIndex: "bookmark_count", key: "bookmark_count", width: 90, render: (v) => (v == null ? "-" : String(v)) },
       { title: "浏览", dataIndex: "view_count", key: "view_count", width: 90, render: (v) => (v == null ? "-" : String(v)) },
       { title: "评论", dataIndex: "comment_count", key: "comment_count", width: 90, render: (v) => (v == null ? "-" : String(v)) },
@@ -185,6 +194,7 @@ export function ImagesPage() {
             { value: "geometry", label: "缺尺寸" },
             { value: "r18", label: "缺 R18 信息" },
             { value: "ai", label: "缺 AI 信息" },
+            { value: "illust_type", label: "缺作品类型" },
             { value: "user", label: "缺作者信息" },
             { value: "title", label: "缺标题" },
             { value: "created_at", label: "缺发布时间" },

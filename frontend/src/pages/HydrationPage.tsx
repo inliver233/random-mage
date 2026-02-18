@@ -110,11 +110,24 @@ const MISSING_OPTIONS = [
   { label: "尺寸与方向", value: "geometry" },
   { label: "R18 信息", value: "r18" },
   { label: "AI 信息", value: "ai" },
+  { label: "作品类型（插画/漫画/动图）", value: "illust_type" },
   { label: "作者信息", value: "user" },
   { label: "标题", value: "title" },
   { label: "发布时间", value: "created_at" },
   { label: "热度（收藏/浏览/评论）", value: "popularity" },
 ];
+
+const MISSING_LABELS: Record<string, string> = {
+  tags: "标签",
+  geometry: "尺寸与方向",
+  r18: "R18 信息",
+  ai: "AI 信息",
+  illust_type: "作品类型",
+  user: "作者信息",
+  title: "标题",
+  created_at: "发布时间",
+  popularity: "热度（收藏/浏览/评论）",
+};
 
 function requestIdFromError(err: unknown): string | null {
   if (!(err instanceof ApiError)) return null;
@@ -176,7 +189,7 @@ function missingSummary(criteria: Record<string, unknown>): string {
   if (Array.isArray(missing)) {
     const values = missing.map((v) => String(v || "").trim()).filter((v) => v.length > 0);
     if (values.length > 0) {
-      return values.join("、");
+      return values.map((v) => MISSING_LABELS[v] || v).join("、");
     }
   }
   return "默认（全部缺失字段）";

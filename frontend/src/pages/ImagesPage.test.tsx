@@ -31,6 +31,7 @@ describe("ImagesPage", () => {
                   orientation: 1,
                   x_restrict: 0,
                   ai_type: 1,
+                  illust_type: 0,
                   bookmark_count: 10,
                   view_count: 20,
                   comment_count: 3,
@@ -69,6 +70,7 @@ describe("ImagesPage", () => {
     expect(await screen.findByText("111")).toBeInTheDocument();
     expect(await screen.findByText("N")).toBeInTheDocument();
     expect(await screen.findByText("Y")).toBeInTheDocument();
+    expect(await screen.findByText("插画")).toBeInTheDocument();
     expect(await screen.findByText(/请求ID:\s*req_images/)).toBeInTheDocument();
   });
 });

@@ -50,6 +50,7 @@ def test_admin_summary_includes_hydration_missing_counts(tmp_path: Path, monkeyp
                 height=200,
                 x_restrict=0,
                 ai_type=0,
+                illust_type=0,
                 user_id=123,
                 user_name="u",
                 title="t",
@@ -88,6 +89,7 @@ def test_admin_summary_includes_hydration_missing_counts(tmp_path: Path, monkeyp
         assert missing["geometry"] == 1
         assert missing["r18"] == 1
         assert missing["ai"] == 1
+        assert missing["illust_type"] == 1
         assert missing["user"] == 1
         assert missing["title"] == 1
         assert missing["created_at"] == 1

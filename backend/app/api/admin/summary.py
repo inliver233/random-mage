@@ -72,6 +72,9 @@ WHERE status=1
             missing_ai = int(
                 (await conn.exec_driver_sql("SELECT COUNT(*) FROM images WHERE status=1 AND ai_type IS NULL;")).scalar_one()
             )
+            missing_illust_type = int(
+                (await conn.exec_driver_sql("SELECT COUNT(*) FROM images WHERE status=1 AND illust_type IS NULL;")).scalar_one()
+            )
             missing_user = int(
                 (await conn.exec_driver_sql("SELECT COUNT(*) FROM images WHERE status=1 AND user_id IS NULL;")).scalar_one()
             )
@@ -134,6 +137,7 @@ WHERE status=1
                     "geometry": missing_geometry,
                     "r18": missing_r18,
                     "ai": missing_ai,
+                    "illust_type": missing_illust_type,
                     "user": missing_user,
                     "title": missing_title,
                     "created_at": missing_created_at,

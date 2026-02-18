@@ -14,7 +14,7 @@ from app.db.session import create_sessionmaker
 
 router = APIRouter()
 
-_ALLOWED_MISSING = {"tags", "geometry", "r18", "ai", "user", "title", "created_at", "popularity"}
+_ALLOWED_MISSING = {"tags", "geometry", "r18", "ai", "illust_type", "user", "title", "created_at", "popularity"}
 
 
 def _parse_missing(values: list[str] | None) -> list[str]:
@@ -86,6 +86,8 @@ async def list_admin_images(
             stmt = stmt.where(Image.x_restrict.is_(None))
         elif key == "ai":
             stmt = stmt.where(Image.ai_type.is_(None))
+        elif key == "illust_type":
+            stmt = stmt.where(Image.illust_type.is_(None))
         elif key == "user":
             stmt = stmt.where(Image.user_id.is_(None))
         elif key == "title":
@@ -115,6 +117,8 @@ async def list_admin_images(
             missing_list.append("r18")
         if img.ai_type is None:
             missing_list.append("ai")
+        if getattr(img, "illust_type", None) is None:
+            missing_list.append("illust_type")
         if img.user_id is None:
             missing_list.append("user")
         if img.title is None or not str(img.title).strip():
@@ -136,6 +140,7 @@ async def list_admin_images(
                 "orientation": img.orientation,
                 "x_restrict": img.x_restrict,
                 "ai_type": img.ai_type,
+                "illust_type": getattr(img, "illust_type", None),
                 "bookmark_count": img.bookmark_count,
                 "view_count": img.view_count,
                 "comment_count": img.comment_count,
