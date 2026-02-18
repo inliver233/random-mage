@@ -163,7 +163,7 @@ def _validate_import_create(data: dict[str, Any]) -> ImportCreateRequest:
     try:
         return ImportCreateRequest(**data)
     except ValidationError as exc:
-        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid import body", status_code=400) from exc
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="导入请求体无效", status_code=400) from exc
 
 
 async def _load_import_request(request: Request) -> ImportCreateRequest:
@@ -257,7 +257,7 @@ async def create_import(
         try:
             payload_path.write_text(body.text, encoding="utf-8")
         except OSError as exc:
-            raise ApiError(code=ErrorCode.INTERNAL_ERROR, message="Failed to persist import payload", status_code=500) from exc
+            raise ApiError(code=ErrorCode.INTERNAL_ERROR, message="写入导入内容失败", status_code=500) from exc
 
         file_ref = make_file_ref(payload_path, base_dir=db_dir)
 

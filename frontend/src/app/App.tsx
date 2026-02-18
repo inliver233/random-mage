@@ -29,6 +29,34 @@ function buildNextParam(location: { pathname: string; search: string }): string 
   return encodeURIComponent(next);
 }
 
+function AriaI18nPatches() {
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+
+    const translations: Record<string, string> = {
+      "Increase Value": "增加数值",
+      "Decrease Value": "减少数值",
+    };
+
+    const applyOnce = () => {
+      for (const [from, to] of Object.entries(translations)) {
+        document.querySelectorAll(`[aria-label=\"${from}\"]`).forEach((node) => {
+          node.setAttribute("aria-label", to);
+        });
+      }
+    };
+
+    applyOnce();
+
+    if (typeof MutationObserver === "undefined") return;
+    const observer = new MutationObserver(() => applyOnce());
+    observer.observe(document.body, { subtree: true, childList: true });
+    return () => observer.disconnect();
+  }, []);
+
+  return null;
+}
+
 function RequireAdminToken({ children }: { children: React.ReactElement }) {
   const location = useLocation();
   const token = getAdminToken();
@@ -63,6 +91,7 @@ export function App() {
   return (
     <ConfigProvider locale={zhCN}>
       <BrowserRouter>
+        <AriaI18nPatches />
         <UnauthorizedListener />
         <Routes>
           <Route path="/" element={<Navigate to="/admin" replace />} />
