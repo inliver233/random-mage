@@ -16,17 +16,20 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.core.config import load_settings
 from app.core.crypto import FieldEncryptor, mask_secret
-from app.core.errors import ErrorCode
+from app.core.errors import ApiError, ErrorCode
 from app.core.failover import classify_pixiv_rate_limit, pixiv_rate_limit_backoff_seconds
 from app.core.metrics import TOKEN_REFRESH_FAIL_TOTAL
 from app.core.proxy_routing import select_proxy_uri_for_url
+from app.core.redact import redact_text
 from app.core.runtime_settings import RuntimeConfig, load_runtime_config
 from app.core.time import iso_utc_ms
 from app.db.models.image_tags import ImageTag
 from app.db.models.images import Image
 from app.db.models.hydration_runs import HydrationRun
 from app.db.models.pixiv_tokens import PixivToken
+from app.db.models.proxy_endpoints import ProxyEndpoint
 from app.db.models.tags import Tag
+from app.db.models.token_proxy_bindings import TokenProxyBinding
 from app.db.session import create_sessionmaker, with_sqlite_busy_retry
 from app.jobs.errors import JobDeferError, JobPermanentError
 from app.pixiv.access_token_cache import AccessTokenCache
@@ -221,6 +224,182 @@ def build_hydrate_metadata_handler(
     last_token_id: int | None = None
     pixiv_throttle_lock = asyncio.Lock()
     last_pixiv_request_m: float = 0.0
+
+    def _env_int(name: str, *, default: int, min_v: int, max_v: int) -> int:
+        raw = (os.environ.get(name) or "").strip()
+        try:
+            value = int(raw)
+        except Exception:
+            value = int(default)
+        return max(int(min_v), min(int(value), int(max_v)))
+
+    proxy_blacklist_ttl_s = _env_int(
+        "HYDRATE_PROXY_BLACKLIST_TTL_S",
+        default=5 * 60,
+        min_v=0,
+        max_v=24 * 60 * 60,
+    )
+    proxy_override_ttl_s = _env_int(
+        "HYDRATE_PROXY_OVERRIDE_TTL_S",
+        default=30 * 60,
+        min_v=0,
+        max_v=7 * 24 * 60 * 60,
+    )
+    proxy_failover_attempts = _env_int(
+        "HYDRATE_PROXY_FAILOVER_ATTEMPTS",
+        default=4,
+        min_v=0,
+        max_v=50,
+    )
+    recoverable_defer_base_s = _env_int(
+        "HYDRATE_RECOVERABLE_DEFER_BASE_S",
+        default=20,
+        min_v=1,
+        max_v=24 * 60 * 60,
+    )
+    recoverable_defer_jitter_s = _env_int(
+        "HYDRATE_RECOVERABLE_DEFER_JITTER_S",
+        default=20,
+        min_v=0,
+        max_v=24 * 60 * 60,
+    )
+
+    def _truncate(text: str, *, max_len: int = 500) -> str:
+        if len(text) <= max_len:
+            return text
+        return text[: max_len - 3] + "..."
+
+    async def _mark_proxy_ok(endpoint_id: int, *, latency_ms: float | None, now_iso: str) -> None:
+        if int(endpoint_id) <= 0:
+            return
+
+        async def _op() -> None:
+            async with Session() as session:
+                await session.execute(
+                    sa.update(ProxyEndpoint)
+                    .where(ProxyEndpoint.id == int(endpoint_id))
+                    .values(
+                        last_latency_ms=float(latency_ms) if latency_ms is not None else None,
+                        last_ok_at=now_iso,
+                        success_count=ProxyEndpoint.success_count + 1,
+                        last_error=None,
+                        blacklisted_until=None,
+                        updated_at=now_iso,
+                    )
+                )
+                await session.commit()
+
+        await with_sqlite_busy_retry(_op)
+
+    async def _mark_proxy_fail(
+        endpoint_id: int,
+        *,
+        latency_ms: float | None,
+        now_dt: datetime,
+        error: BaseException | str,
+    ) -> None:
+        if int(endpoint_id) <= 0:
+            return
+
+        now_iso = iso_utc_ms(now_dt)
+        blacklist_until_iso = (
+            iso_utc_ms(now_dt + timedelta(seconds=int(proxy_blacklist_ttl_s)))
+            if int(proxy_blacklist_ttl_s) > 0
+            else None
+        )
+        msg_raw = f"{type(error).__name__}: {error}" if isinstance(error, BaseException) else str(error)
+        msg = _truncate(redact_text(msg_raw))
+
+        async def _op() -> None:
+            async with Session() as session:
+                if blacklist_until_iso:
+                    blacklist_expr = sa.case(
+                        (
+                            sa.and_(
+                                ProxyEndpoint.blacklisted_until.isnot(None),
+                                ProxyEndpoint.blacklisted_until > blacklist_until_iso,
+                            ),
+                            ProxyEndpoint.blacklisted_until,
+                        ),
+                        else_=blacklist_until_iso,
+                    )
+                else:
+                    blacklist_expr = ProxyEndpoint.blacklisted_until
+
+                await session.execute(
+                    sa.update(ProxyEndpoint)
+                    .where(ProxyEndpoint.id == int(endpoint_id))
+                    .values(
+                        last_latency_ms=float(latency_ms) if latency_ms is not None else None,
+                        last_fail_at=now_iso,
+                        failure_count=ProxyEndpoint.failure_count + 1,
+                        blacklisted_until=blacklist_expr,
+                        last_error=msg,
+                        updated_at=now_iso,
+                    )
+                )
+                await session.commit()
+
+        await with_sqlite_busy_retry(_op)
+
+    async def _set_token_proxy_override(
+        *,
+        token_id: int,
+        pool_id: int,
+        endpoint_id: int,
+        now_dt: datetime,
+    ) -> None:
+        if int(proxy_override_ttl_s) <= 0:
+            return
+        if int(token_id) <= 0 or int(pool_id) <= 0 or int(endpoint_id) <= 0:
+            return
+
+        now_iso = iso_utc_ms(now_dt)
+        expires_at = iso_utc_ms(now_dt + timedelta(seconds=int(proxy_override_ttl_s)))
+
+        async def _op() -> None:
+            async with Session() as session:
+                await session.execute(
+                    sa.update(TokenProxyBinding)
+                    .where(
+                        sa.and_(
+                            TokenProxyBinding.token_id == int(token_id),
+                            TokenProxyBinding.pool_id == int(pool_id),
+                        )
+                    )
+                    .values(
+                        override_proxy_id=int(endpoint_id),
+                        override_expires_at=expires_at,
+                        updated_at=now_iso,
+                    )
+                )
+                await session.commit()
+
+        await with_sqlite_busy_retry(_op)
+
+    def _is_recoverable_exc(exc: BaseException) -> bool:
+        if isinstance(exc, httpx.RequestError):
+            return True
+        if isinstance(exc, ApiError) and exc.code in {
+            ErrorCode.PROXY_REQUIRED,
+            ErrorCode.PROXY_CONNECT_FAILED,
+            ErrorCode.PROXY_AUTH_FAILED,
+        }:
+            return True
+        if isinstance(exc, PixivOauthError):
+            status = exc.status_code
+            return status is None or int(status) >= 500
+        if isinstance(exc, httpx.HTTPStatusError):
+            status_code = int(getattr(getattr(exc, "response", None), "status_code", 0) or 0)
+            return status_code >= 500
+        return False
+
+    def _recoverable_defer_run_after_iso() -> str:
+        base = float(recoverable_defer_base_s)
+        jitter = float(max(0, int(recoverable_defer_jitter_s)))
+        delay_s = base + random.random() * jitter
+        retry_dt = datetime.now(timezone.utc) + timedelta(seconds=float(delay_s))
+        return iso_utc_ms(retry_dt)
 
     def _rate_limit_int(
         runtime: RuntimeConfig,
@@ -620,33 +799,99 @@ LIMIT 1;
         if not await _is_token_enabled(int(token_id)):
             raise TokenDisabledError("Token disabled")
 
+        oauth_url = oauth_config.base_url.rstrip("/") + OAUTH_TOKEN_PATH
+
         async def refresher() -> Any:
             if not await _is_token_enabled(int(token_id)):
                 raise TokenDisabledError("Token disabled")
             refresh_token = await _get_refresh_token(token_id)
-            proxy_uri = None
-            oauth_url = oauth_config.base_url.rstrip("/") + OAUTH_TOKEN_PATH
-            picked_proxy = await select_proxy_uri_for_url(
-                engine,
-                settings,
-                runtime,
-                url=oauth_url,
-                token_id=int(token_id),
-            )
-            if picked_proxy is not None:
-                proxy_uri = picked_proxy.uri
 
-            await _pixiv_throttle(runtime)
-            token = await refresh_access_token(
-                refresh_token=refresh_token,
-                config=oauth_config,
-                transport=transport,
-                proxy=proxy_uri,
-            )
-            rotated = token.refresh_token
-            if rotated:
-                await _rotate_refresh_token(token_id, rotated_refresh_token=rotated, now_dt=now_dt)
-            return token
+            last_exc: BaseException | None = None
+            max_tries = max(1, int(proxy_failover_attempts) + 1)
+
+            for _try in range(max_tries):
+                attempt_now_dt = datetime.now(timezone.utc)
+                attempt_now_iso = iso_utc_ms(attempt_now_dt)
+
+                proxy_uri = None
+                picked_proxy = await select_proxy_uri_for_url(
+                    engine,
+                    settings,
+                    runtime,
+                    url=oauth_url,
+                    token_id=int(token_id),
+                )
+                if picked_proxy is not None:
+                    proxy_uri = picked_proxy.uri
+
+                start_m = float(time.monotonic())
+                try:
+                    await _pixiv_throttle(runtime)
+                    token = await refresh_access_token(
+                        refresh_token=refresh_token,
+                        config=oauth_config,
+                        transport=transport,
+                        proxy=proxy_uri,
+                    )
+                except PixivOauthError as exc:
+                    latency_ms = (float(time.monotonic()) - start_m) * 1000.0
+                    if picked_proxy is not None:
+                        if exc.status_code is not None and int(exc.status_code) < 500:
+                            await _mark_proxy_ok(
+                                int(picked_proxy.endpoint_id),
+                                latency_ms=float(latency_ms),
+                                now_iso=str(attempt_now_iso),
+                            )
+                        else:
+                            await _mark_proxy_fail(
+                                int(picked_proxy.endpoint_id),
+                                latency_ms=float(latency_ms),
+                                now_dt=attempt_now_dt,
+                                error=exc,
+                            )
+
+                    if exc.status_code is None or int(exc.status_code) >= 500:
+                        last_exc = exc
+                        if picked_proxy is None:
+                            break
+                        continue
+                    raise
+                except httpx.RequestError as exc:
+                    latency_ms = (float(time.monotonic()) - start_m) * 1000.0
+                    if picked_proxy is not None:
+                        await _mark_proxy_fail(
+                            int(picked_proxy.endpoint_id),
+                            latency_ms=float(latency_ms),
+                            now_dt=attempt_now_dt,
+                            error=exc,
+                        )
+                    last_exc = exc
+                    if picked_proxy is None:
+                        break
+                    continue
+                else:
+                    latency_ms = (float(time.monotonic()) - start_m) * 1000.0
+                    if picked_proxy is not None:
+                        await _mark_proxy_ok(
+                            int(picked_proxy.endpoint_id),
+                            latency_ms=float(latency_ms),
+                            now_iso=str(attempt_now_iso),
+                        )
+                        await _set_token_proxy_override(
+                            token_id=int(token_id),
+                            pool_id=int(picked_proxy.pool_id),
+                            endpoint_id=int(picked_proxy.endpoint_id),
+                            now_dt=attempt_now_dt,
+                        )
+
+                    rotated = token.refresh_token
+                    if rotated:
+                        await _rotate_refresh_token(token_id, rotated_refresh_token=rotated, now_dt=attempt_now_dt)
+                    return token
+
+            if last_exc is not None:
+                raise last_exc
+            raise PixivOauthError("OAuth refresh failed", status_code=None)
 
         token = await token_cache.get_or_refresh(token_id, refresher=refresher)
         if not await _is_token_enabled(int(token_id)):
@@ -660,53 +905,109 @@ LIMIT 1;
         access_token: str,
         token_id: int,
         runtime: RuntimeConfig,
+        now_dt: datetime,
     ) -> dict[str, Any]:
         headers = oauth_config.build_headers(client_time=datetime.now(timezone.utc).isoformat(timespec="seconds"))
         headers["Authorization"] = f"Bearer {access_token}"
 
-        proxy_uri = None
-        picked_proxy = await select_proxy_uri_for_url(
-            engine,
-            settings,
-            runtime,
-            url=PIXIV_ILLUST_DETAIL_URL,
-            token_id=int(token_id),
-        )
-        if picked_proxy is not None:
-            proxy_uri = picked_proxy.uri
+        last_exc: BaseException | None = None
+        max_tries = max(1, int(proxy_failover_attempts) + 1)
 
-        client_kwargs: dict[str, Any] = {
-            "timeout": httpx.Timeout(30.0, connect=10.0),
-            "follow_redirects": True,
-        }
-        if transport is not None:
-            client_kwargs["transport"] = transport
-        if proxy_uri:
-            client_kwargs["proxy"] = proxy_uri
+        for _try in range(max_tries):
+            attempt_now_dt = datetime.now(timezone.utc)
+            attempt_now_iso = iso_utc_ms(attempt_now_dt)
 
-        await _pixiv_throttle(runtime)
-        async with httpx.AsyncClient(**client_kwargs) as client:
-            resp = await client.get(
-                PIXIV_ILLUST_DETAIL_URL,
-                params={"illust_id": int(illust_id), "filter": "for_android"},
-                headers=headers,
+            proxy_uri = None
+            picked_proxy = await select_proxy_uri_for_url(
+                engine,
+                settings,
+                runtime,
+                url=PIXIV_ILLUST_DETAIL_URL,
+                token_id=int(token_id),
             )
+            if picked_proxy is not None:
+                proxy_uri = picked_proxy.uri
 
-        if resp.status_code != 200:
-            text = resp.text
-            raise httpx.HTTPStatusError(
+            client_kwargs: dict[str, Any] = {
+                "timeout": httpx.Timeout(30.0, connect=10.0),
+                "follow_redirects": True,
+            }
+            if transport is not None:
+                client_kwargs["transport"] = transport
+            if proxy_uri:
+                client_kwargs["proxy"] = proxy_uri
+
+            start_m = float(time.monotonic())
+            try:
+                await _pixiv_throttle(runtime)
+                async with httpx.AsyncClient(**client_kwargs) as client:
+                    resp = await client.get(
+                        PIXIV_ILLUST_DETAIL_URL,
+                        params={"illust_id": int(illust_id), "filter": "for_android"},
+                        headers=headers,
+                    )
+            except httpx.RequestError as exc:
+                latency_ms = (float(time.monotonic()) - start_m) * 1000.0
+                if picked_proxy is not None:
+                    await _mark_proxy_fail(
+                        int(picked_proxy.endpoint_id),
+                        latency_ms=float(latency_ms),
+                        now_dt=attempt_now_dt,
+                        error=exc,
+                    )
+                last_exc = exc
+                if picked_proxy is None:
+                    break
+                continue
+
+            latency_ms = (float(time.monotonic()) - start_m) * 1000.0
+            if picked_proxy is not None:
+                if int(resp.status_code) >= 500:
+                    await _mark_proxy_fail(
+                        int(picked_proxy.endpoint_id),
+                        latency_ms=float(latency_ms),
+                        now_dt=attempt_now_dt,
+                        error=f"status={int(resp.status_code)}",
+                    )
+                else:
+                    await _mark_proxy_ok(
+                        int(picked_proxy.endpoint_id),
+                        latency_ms=float(latency_ms),
+                        now_iso=str(attempt_now_iso),
+                    )
+
+            if resp.status_code == 200:
+                if picked_proxy is not None:
+                    await _set_token_proxy_override(
+                        token_id=int(token_id),
+                        pool_id=int(picked_proxy.pool_id),
+                        endpoint_id=int(picked_proxy.endpoint_id),
+                        now_dt=attempt_now_dt,
+                    )
+
+                try:
+                    data = resp.json()
+                except Exception as exc:
+                    raise ValueError("Pixiv App API response is not JSON") from exc
+                if not isinstance(data, dict):
+                    raise ValueError("Pixiv App API response invalid")
+                return data
+
+            http_exc = httpx.HTTPStatusError(
                 f"Pixiv App API error status={resp.status_code}",
                 request=resp.request,
                 response=resp,
             )
+            if int(resp.status_code) >= 500:
+                last_exc = http_exc
+                if picked_proxy is None:
+                    break
+                continue
+            raise http_exc
 
-        try:
-            data = resp.json()
-        except Exception as exc:
-            raise ValueError("Pixiv App API response is not JSON") from exc
-        if not isinstance(data, dict):
-            raise ValueError("Pixiv App API response invalid")
-        return data
+        if last_exc is not None:
+            raise last_exc
+        raise RuntimeError("Pixiv App API request failed")
 
     async def _persist(
         *,
@@ -839,7 +1140,18 @@ LIMIT 1;
         last_exc: BaseException | None = None
 
         for _ in range(0, 10):
-            token_id = await _choose_token_id(now_epoch=now_epoch, exclude_ids=tried)
+            try:
+                token_id = await _choose_token_id(now_epoch=now_epoch, exclude_ids=tried)
+            except JobDeferError as exc:
+                if last_exc is not None and _is_recoverable_exc(last_exc):
+                    code = ErrorCode.PROXY_CONNECT_FAILED
+                    if isinstance(last_exc, ApiError):
+                        code = last_exc.code
+                    raise JobDeferError(
+                        f"{code.value}: 代理/网络异常，稍后重试",
+                        run_after=_recoverable_defer_run_after_iso(),
+                    ) from last_exc
+                raise
             tried.add(int(token_id))
 
             try:
@@ -847,8 +1159,18 @@ LIMIT 1;
             except TokenDisabledError as exc:
                 last_exc = exc
                 continue
+            except ApiError as exc:
+                last_exc = exc
+                continue
+            except httpx.RequestError as exc:
+                TOKEN_REFRESH_FAIL_TOTAL.inc()
+                last_exc = exc
+                continue
             except PixivOauthError as exc:
                 TOKEN_REFRESH_FAIL_TOTAL.inc()
+                if exc.status_code is None or int(exc.status_code) >= 500:
+                    last_exc = exc
+                    continue
                 attempt = 0
                 async with Session() as session:
                     row = await session.get(PixivToken, int(token_id))
@@ -890,6 +1212,7 @@ LIMIT 1;
                     access_token=access_token,
                     token_id=int(token_id),
                     runtime=runtime,
+                    now_dt=now_dt,
                 )
             except httpx.HTTPStatusError as exc:
                 status = int(getattr(exc.response, "status_code", 0) or 0)
@@ -918,6 +1241,12 @@ LIMIT 1;
                         last_exc = JobDeferError("Pixiv rate limited", run_after=backoff_until)
                     continue
 
+                last_exc = exc
+                continue
+            except ApiError as exc:
+                last_exc = exc
+                continue
+            except httpx.RequestError as exc:
                 last_exc = exc
                 continue
             except Exception as exc:
@@ -1005,6 +1334,14 @@ LIMIT 1;
             raise last_exc
         if last_exc is None:
             raise RuntimeError("hydrate_metadata failed")
+        if _is_recoverable_exc(last_exc):
+            code = ErrorCode.PROXY_CONNECT_FAILED
+            if isinstance(last_exc, ApiError):
+                code = last_exc.code
+            raise JobDeferError(
+                f"{code.value}: 代理/网络异常，稍后重试",
+                run_after=_recoverable_defer_run_after_iso(),
+            ) from last_exc
         raise last_exc
 
     async def _handler(job: dict[str, Any]) -> None:
