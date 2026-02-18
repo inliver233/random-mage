@@ -21,6 +21,7 @@ import { JobsPage } from "../pages/JobsPage";
 import { HydrationPage } from "../pages/HydrationPage";
 import { SettingsPage } from "../pages/SettingsPage";
 import { AuditPage } from "../pages/AuditPage";
+import { RecommendationPage } from "../pages/RecommendationPage";
 import { PlaceholderPage } from "../pages/PlaceholderPage";
 
 function buildNextParam(location: { pathname: string; search: string }): string {
@@ -78,6 +79,7 @@ export function App() {
             <Route path="import" element={<ImportPage />} />
             <Route path="import/:id" element={<ImportDetailPage />} />
             <Route path="random" element={<PlaygroundPage />} />
+            <Route path="recommendation" element={<RecommendationPage />} />
             <Route path="images" element={<ImagesPage />} />
             <Route path="tags" element={<TagsPage />} />
             <Route path="authors" element={<AuthorsPage />} />

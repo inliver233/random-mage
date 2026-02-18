@@ -19,6 +19,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: "/admin/bindings", label: "绑定关系" },
   { key: "/admin/settings", label: "系统设置" },
   { key: "/admin/audit", label: "审计日志" },
+  { key: "/admin/recommendation", label: "推荐策略" },
   { key: "/admin/random", label: "随机调试" },
 ];
 
