@@ -67,6 +67,7 @@ def test_hydrate_persists_popularity_fields_and_public_api_outputs(tmp_path: Pat
                         "title": "title_test",
                         "user": {"id": 999, "name": "user_test"},
                         "x_restrict": 0,
+                        "illust_type": 0,
                         "illust_ai_type": 1,
                         "width": 1200,
                         "height": 800,
@@ -150,6 +151,7 @@ def test_hydrate_persists_popularity_fields_and_public_api_outputs(tmp_path: Pat
                 assert img.bookmark_count == 123
                 assert img.view_count == 456
                 assert img.comment_count == 7
+                assert img.illust_type == 0
 
             nonlocal image0_id
             image0_id = int(images[0].id)
@@ -185,4 +187,3 @@ def test_hydrate_persists_popularity_fields_and_public_api_outputs(tmp_path: Pat
         assert item["bookmark_count"] == 123
         assert item["view_count"] == 456
         assert item["comment_count"] == 7
-

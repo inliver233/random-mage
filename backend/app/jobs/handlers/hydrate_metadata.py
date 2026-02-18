@@ -454,7 +454,7 @@ def build_hydrate_metadata_handler(
             return default
 
     def _missing_set_from_criteria(criteria: dict[str, Any]) -> set[str]:
-        default = {"tags", "geometry", "r18", "ai", "user", "title", "created_at", "popularity"}
+        default = {"tags", "geometry", "r18", "ai", "illust_type", "user", "title", "created_at", "popularity"}
         raw = criteria.get("missing")
         if not isinstance(raw, list):
             return set(default)
@@ -479,6 +479,8 @@ def build_hydrate_metadata_handler(
             parts.append("(x_restrict IS NULL)")
         if "ai" in missing:
             parts.append("(ai_type IS NULL)")
+        if "illust_type" in missing:
+            parts.append("(illust_type IS NULL)")
         if "user" in missing:
             parts.append("(user_id IS NULL)")
         if "title" in missing:
@@ -1019,6 +1021,7 @@ LIMIT 1;
         orientation: int | None,
         x_restrict: int | None,
         ai_type: int | None,
+        illust_type: int | None,
         user_id: int | None,
         user_name: str | None,
         title: str | None,
@@ -1076,6 +1079,7 @@ LIMIT 1;
                         orientation=orientation,
                         x_restrict=x_restrict,
                         ai_type=ai_type,
+                        illust_type=illust_type,
                         user_id=user_id,
                         user_name=user_name,
                         title=title,
@@ -1096,6 +1100,7 @@ LIMIT 1;
                             "orientation": stmt.excluded.orientation,
                             "x_restrict": stmt.excluded.x_restrict,
                             "ai_type": stmt.excluded.ai_type,
+                            "illust_type": stmt.excluded.illust_type,
                             "user_id": stmt.excluded.user_id,
                             "user_name": stmt.excluded.user_name,
                             "title": stmt.excluded.title,
@@ -1283,6 +1288,18 @@ LIMIT 1;
             if ai_type is None:
                 ai_type = _as_int(illust.get("ai_type"))
 
+            illust_type = _as_int(illust.get("illust_type"))
+            if illust_type is None:
+                kind = _as_str(illust.get("type"))
+                if kind == "illust":
+                    illust_type = 0
+                elif kind == "manga":
+                    illust_type = 1
+                elif kind == "ugoira":
+                    illust_type = 2
+            if illust_type is not None and int(illust_type) not in {0, 1, 2}:
+                illust_type = None
+
             user = illust.get("user")
             user_id = _as_int(user.get("id")) if isinstance(user, dict) else None
             user_name = _as_str(user.get("name")) if isinstance(user, dict) else None
@@ -1317,6 +1334,7 @@ LIMIT 1;
                 orientation=orientation,
                 x_restrict=x_restrict,
                 ai_type=ai_type,
+                illust_type=illust_type,
                 user_id=user_id,
                 user_name=user_name,
                 title=title,

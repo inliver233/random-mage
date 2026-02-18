@@ -89,6 +89,7 @@ def test_job_handler_hydrate_metadata_happy_path_updates_images_and_tags(tmp_pat
                         "title": "title_test",
                         "user": {"id": 999, "name": "user_test"},
                         "x_restrict": 0,
+                        "illust_type": 0,
                         "illust_ai_type": 1,
                         "width": 1200,
                         "height": 800,
@@ -201,6 +202,7 @@ def test_job_handler_hydrate_metadata_happy_path_updates_images_and_tags(tmp_pat
             assert images[0].aspect_ratio and abs(float(images[0].aspect_ratio) - 1.5) < 1e-6
             assert images[0].x_restrict == 0
             assert images[0].ai_type == 1
+            assert images[0].illust_type == 0
             assert images[0].user_id == 999
             assert images[0].user_name == "user_test"
             assert images[0].title == "title_test"

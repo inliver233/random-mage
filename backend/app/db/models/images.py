@@ -21,6 +21,7 @@ class Image(Base):
             "height",
             "random_key",
         ),
+        sa.Index("idx_images_illust_type_random", "status", "illust_type", "random_key"),
         sa.Index("idx_images_user_random", "status", "user_id", "random_key"),
         sa.Index("idx_images_created_at_pixiv", "created_at_pixiv"),
         sa.Index("idx_images_created_import_id", "created_import_id"),
@@ -42,6 +43,7 @@ class Image(Base):
     orientation: Mapped[int | None] = mapped_column(sa.Integer(), nullable=True)
     x_restrict: Mapped[int | None] = mapped_column(sa.Integer(), nullable=True)
     ai_type: Mapped[int | None] = mapped_column(sa.Integer(), nullable=True)
+    illust_type: Mapped[int | None] = mapped_column(sa.Integer(), nullable=True)
     user_id: Mapped[int | None] = mapped_column(sa.Integer(), nullable=True)
     user_name: Mapped[str | None] = mapped_column(sa.Text(), nullable=True)
     title: Mapped[str | None] = mapped_column(sa.Text(), nullable=True)
