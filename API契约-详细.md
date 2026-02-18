@@ -345,8 +345,22 @@ Body：
 #### `POST /admin/api/proxies/easy-proxies/import`
 Body：
 ```json
-{ "base_url": "http://easy-proxies:9090", "password": "***", "conflict_policy": "skip_non_easy_proxies" }
+{
+  "base_url": "http://easy-proxies:9090",
+  "password": "***",
+  "conflict_policy": "skip_non_easy_proxies",
+  "host_override": "easy-proxies",
+  "attach_pool_id": 1,
+  "attach_weight": 1,
+  "recompute_bindings": true,
+  "max_tokens_per_proxy": 2,
+  "strict": false
+}
 ```
+说明：
+- 若 easy_proxies 的导出内容使用 `0.0.0.0/127.0.0.1/localhost` 作为占位 host，后端会自动替换为 `base_url` 的 host；也可用 `host_override` 强制指定替换 host。
+- `attach_pool_id` 为可选：填写后会把本次导入来源（`source=easy_proxies, source_ref=base_url`）的节点自动加入指定代理池。
+- `recompute_bindings=true` 需要同时提供 `attach_pool_id`，用于自动重算 token↔proxy 绑定。
 
 #### `POST /admin/api/proxies/probe`
 触发全量健康探测（异步 job）。
@@ -365,7 +379,7 @@ Body：
 列出 token↔proxy 的 primary/override。
 
 #### `POST /admin/api/bindings/recompute`
-Body：`{ "pool_id": 1, "max_tokens_per_proxy": 2 }`
+Body：`{ "pool_id": 1, "max_tokens_per_proxy": 2, "strict": true }`
 
 #### `POST /admin/api/bindings/{id}/override`
 Body：`{ "override_proxy_id": 10, "ttl_ms": 1200000, "reason": "manual_override" }`

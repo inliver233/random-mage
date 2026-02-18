@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, Card, Form, Input, InputNumber, Select, Skeleton, Space, Table, Typography } from "antd";
+import { Alert, Button, Card, Form, Input, InputNumber, Select, Skeleton, Space, Switch, Table, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 
 import { ApiError, apiJson } from "../api/client";
 
@@ -35,6 +35,19 @@ type ProxiesEndpointsResponse = {
   request_id: string;
 };
 
+type ProxyPoolItem = {
+  id: string;
+  name: string;
+  description: string | null;
+  enabled: boolean;
+};
+
+type ProxyPoolsListResponse = {
+  ok: true;
+  items: ProxyPoolItem[];
+  request_id: string;
+};
+
 type ManualImportFormValues = {
   text: string;
   source: "manual";
@@ -54,6 +67,13 @@ type EasyProxiesImportFormValues = {
   base_url: string;
   password: string;
   conflict_policy: "overwrite" | "skip_non_easy_proxies";
+  bootstrap: boolean;
+  host_override?: string;
+  attach_pool_id?: number;
+  attach_weight?: number;
+  recompute_bindings?: boolean;
+  max_tokens_per_proxy?: number;
+  strict?: boolean;
 };
 
 type EasyProxiesImportResponse = {
@@ -63,6 +83,8 @@ type EasyProxiesImportResponse = {
   skipped: number;
   errors: Array<{ code: string; message: string }>;
   warnings?: string[];
+  attach?: { pool_id: string; endpoints_total: number; created: number; updated: number };
+  bindings?: { pool_id: string; recomputed: number } & Record<string, unknown>;
   request_id: string;
 };
 
@@ -169,6 +191,11 @@ export function ProxiesPage() {
     queryFn: () => apiJson<ProxiesEndpointsResponse>("/admin/api/proxies/endpoints"),
   });
 
+  const poolsQuery = useQuery({
+    queryKey: ["admin", "proxy-pools"],
+    queryFn: () => apiJson<ProxyPoolsListResponse>("/admin/api/proxy-pools"),
+  });
+
   const [manualErrorMessage, setManualErrorMessage] = useState<string | null>(null);
   const [manualRequestId, setManualRequestId] = useState<string | null>(null);
   const [manualResult, setManualResult] = useState<ManualImportResponse | null>(null);
@@ -185,6 +212,16 @@ export function ProxiesPage() {
   const [easyRequestId, setEasyRequestId] = useState<string | null>(null);
   const [easyResult, setEasyResult] = useState<EasyProxiesImportResponse | null>(null);
   const [easyForm] = Form.useForm<EasyProxiesImportFormValues>();
+
+  useEffect(() => {
+    const enabledPools = (poolsQuery.data?.items || []).filter((p) => Boolean(p.enabled));
+    if (enabledPools.length <= 0) return;
+    const current = easyForm.getFieldValue("attach_pool_id");
+    if (typeof current === "number" && Number.isFinite(current) && current > 0) return;
+    const firstId = Number(enabledPools[0].id);
+    if (!Number.isFinite(firstId) || firstId <= 0) return;
+    easyForm.setFieldValue("attach_pool_id", firstId);
+  }, [poolsQuery.data, easyForm]);
 
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [actionRequestId, setActionRequestId] = useState<string | null>(null);
@@ -289,11 +326,27 @@ export function ProxiesPage() {
   });
 
   const easyImport = useMutation({
-    mutationFn: (values: EasyProxiesImportFormValues) =>
-      apiJson<EasyProxiesImportResponse>("/admin/api/proxies/easy-proxies/import", {
+    mutationFn: (values: EasyProxiesImportFormValues) => {
+      const payload: Record<string, unknown> = {
+        base_url: String(values.base_url || "").trim(),
+        password: String(values.password || ""),
+        conflict_policy: values.conflict_policy,
+      };
+      if (String(values.host_override || "").trim()) payload.host_override = String(values.host_override || "").trim();
+      if (Boolean(values.bootstrap)) {
+        if (typeof values.attach_pool_id === "number") payload.attach_pool_id = values.attach_pool_id;
+        if (typeof values.attach_weight === "number") payload.attach_weight = values.attach_weight;
+        payload.recompute_bindings = values.recompute_bindings !== false;
+        if (payload.recompute_bindings) {
+          if (typeof values.max_tokens_per_proxy === "number") payload.max_tokens_per_proxy = values.max_tokens_per_proxy;
+          payload.strict = Boolean(values.strict);
+        }
+      }
+      return apiJson<EasyProxiesImportResponse>("/admin/api/proxies/easy-proxies/import", {
         method: "POST",
-        body: JSON.stringify(values),
-      }),
+        body: JSON.stringify(payload),
+      });
+    },
     onMutate: () => {
       setEasyErrorMessage(null);
       setEasyRequestId(null);
@@ -391,19 +444,44 @@ export function ProxiesPage() {
               <div>2) “访问密码”是面板登录密码；代理账号/密码来自导出的代理 URI。</div>
               <div>3) 若代理密码包含“@”，导出的 URI 可能形如 `http://user:pass@123@host:2323`（多个 @ 属正常）；也支持 `%40` 编码写法。</div>
               <div>4) 单入口 pool：你通常只会看到 1 个端口（例如 2323），该端口在 easy-proxies 内部轮换节点，本项目无法直接展示 pool 内部实际命中的端口。</div>
-              <div>5) multi-port：你会看到很多不同端口（例如 24004/24005/...），每个端口就是一个独立节点；可在本项目侧探测并禁用不稳定节点。</div>
-              <div>6) hybrid：可能同时存在 pool 入口与 multi-port 节点，建议优先导入 multi-port 节点以便精细管理。</div>
-              <div>7) 使用单入口 pool 时，可在“代理池”页面把该入口的成员权重设置为节点数，以贴近真实容量与绑定容量。</div>
-            </div>
-          }
-          style={{ marginBottom: 12 }}
-        />
+               <div>5) multi-port：你会看到很多不同端口（例如 24004/24005/...），每个端口就是一个独立节点；可在本项目侧探测并禁用不稳定节点。</div>
+               <div>6) hybrid：可能同时存在 pool 入口与 multi-port 节点，建议优先导入 multi-port 节点以便精细管理。</div>
+               <div>7) 使用单入口 pool 时，可在“代理池”页面把该入口的成员权重设置为节点数，以贴近真实容量与绑定容量。</div>
+               <div>8) 若导出结果里 host 是 0.0.0.0/127.0.0.1/localhost 等占位符，本项目会自动替换为“面板地址”的 host，避免导入后不可连接。</div>
+             </div>
+           }
+           style={{ marginBottom: 12 }}
+         />
 
         <Form<EasyProxiesImportFormValues>
           form={easyForm}
           layout="vertical"
-          initialValues={{ base_url: "", password: "", conflict_policy: "skip_non_easy_proxies" }}
-          onFinish={(values) => easyImport.mutate(values)}
+          initialValues={{
+            base_url: "",
+            password: "",
+            conflict_policy: "skip_non_easy_proxies",
+            bootstrap: true,
+            attach_pool_id: 1,
+            attach_weight: 1,
+            recompute_bindings: true,
+            max_tokens_per_proxy: 2,
+            strict: false,
+          }}
+          onFinish={(values) => {
+            let attachPoolId = values.attach_pool_id;
+            if (values.bootstrap && typeof attachPoolId !== "number") {
+              const enabledPools = (poolsQuery.data?.items || []).filter((p) => Boolean(p.enabled));
+              if (enabledPools.length === 1) {
+                const autoId = Number(enabledPools[0].id);
+                if (Number.isFinite(autoId) && autoId > 0) attachPoolId = autoId;
+              }
+            }
+            if (values.bootstrap && typeof attachPoolId !== "number") {
+              setEasyErrorMessage("请选择要加入的代理池");
+              return;
+            }
+            easyImport.mutate({ ...values, attach_pool_id: attachPoolId });
+          }}
         >
           <Form.Item
             label="面板地址"
@@ -425,6 +503,64 @@ export function ProxiesPage() {
             />
           </Form.Item>
 
+          <Form.Item
+            label="一键接入（推荐）"
+            name="bootstrap"
+            valuePropName="checked"
+            extra="开启后：导入完成会自动加入代理池，并可选重算 token 绑定；适合 Docker Compose 启动后一键可用。"
+          >
+            <Switch />
+          </Form.Item>
+
+          <Form.Item noStyle shouldUpdate={(prev, cur) => prev.bootstrap !== cur.bootstrap}>
+            {({ getFieldValue }) =>
+              getFieldValue("bootstrap") ? (
+                <>
+                  <Form.Item
+                    label="加入代理池"
+                    name="attach_pool_id"
+                    rules={[{ required: true, message: "请选择代理池" }]}
+                    extra={poolsQuery.isError ? "代理池列表加载失败（可稍后刷新或先到“代理池”页面创建）。" : undefined}
+                  >
+                    <Select
+                      placeholder="选择一个代理池"
+                      loading={poolsQuery.isLoading}
+                      options={(poolsQuery.data?.items || [])
+                        .filter((p) => Boolean(p.enabled))
+                        .map((p) => ({ value: Number(p.id), label: `${p.name}(#${p.id})` }))}
+                      style={{ minWidth: 260 }}
+                    />
+                  </Form.Item>
+                  <Form.Item label="成员权重" name="attach_weight" extra="权重越大，越可能被选中；也会影响 token 绑定容量。">
+                    <InputNumber min={0} max={1000} style={{ width: 180 }} />
+                  </Form.Item>
+                  <Form.Item label="重算 token 绑定" name="recompute_bindings" valuePropName="checked">
+                    <Switch />
+                  </Form.Item>
+                  <Form.Item noStyle shouldUpdate={(p, c) => p.recompute_bindings !== c.recompute_bindings}>
+                    {({ getFieldValue: get2 }) =>
+                      get2("recompute_bindings") ? (
+                        <>
+                          <Form.Item label="单代理最多绑定令牌数" name="max_tokens_per_proxy">
+                            <InputNumber min={1} max={1000} style={{ width: 180 }} />
+                          </Form.Item>
+                          <Form.Item
+                            label="严格容量校验"
+                            name="strict"
+                            valuePropName="checked"
+                            extra="关闭后即使代理容量不足也会尽量分配（更稳健，但可能多个 token 共享同一节点）。"
+                          >
+                            <Switch />
+                          </Form.Item>
+                        </>
+                      ) : null
+                    }
+                  </Form.Item>
+                </>
+              ) : null
+            }
+          </Form.Item>
+
           <Button type="primary" htmlType="submit" loading={easyImport.isPending}>
             开始导入
           </Button>
@@ -437,7 +573,17 @@ export function ProxiesPage() {
               type="success"
               showIcon
               message="外部代理服务导入完成"
-              description={`新增: ${easyResult.created}，更新: ${easyResult.updated}，跳过: ${easyResult.skipped}，错误: ${easyResult.errors.length}`}
+              description={
+                [
+                  `新增: ${easyResult.created}，更新: ${easyResult.updated}，跳过: ${easyResult.skipped}，错误: ${easyResult.errors.length}`,
+                  easyResult.attach
+                    ? `加入代理池 #${easyResult.attach.pool_id}: 节点总数=${easyResult.attach.endpoints_total}（新增=${easyResult.attach.created}，更新=${easyResult.attach.updated}）`
+                    : null,
+                  easyResult.bindings ? `重算绑定: ${String(easyResult.bindings.recomputed ?? "-")}` : null,
+                ]
+                  .filter(Boolean)
+                  .join("；")
+              }
               style={{ marginTop: 12 }}
             />
             {Array.isArray(easyResult.warnings) && easyResult.warnings.length > 0 ? (

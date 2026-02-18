@@ -6,8 +6,10 @@ from urllib.parse import urlparse, urlunparse
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Request
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.api.admin.deps import get_admin_claims
+from app.core.bindings_recompute import recompute_token_proxy_bindings
 from app.core.crypto import FieldEncryptor
 from app.core.errors import ApiError, ErrorCode
 from app.core.proxy_uri import parse_proxy_uri
@@ -20,6 +22,7 @@ from app.db.models.proxy_pools import ProxyPool
 from app.db.models.token_proxy_bindings import TokenProxyBinding
 from app.db.session import create_sessionmaker, with_sqlite_busy_retry
 from app.easy_proxies.client import EasyProxiesError, easy_proxies_auth, easy_proxies_export
+from app.easy_proxies.normalize import normalize_exported_proxy_host, resolve_export_host
 
 router = APIRouter()
 
@@ -270,8 +273,71 @@ async def _load_easy_import_json(request: Request) -> dict[str, Any]:
     if not base_url:
         raise ApiError(code=ErrorCode.BAD_REQUEST, message="Missing base_url", status_code=400)
 
+    host_override_raw = data.get("host_override")
+    host_override = str(host_override_raw).strip() if host_override_raw is not None else ""
+    host_override = host_override if host_override else None
+    if host_override is not None and len(host_override) > 200:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid host_override", status_code=400)
+
+    attach_pool_id: int | None = None
+    if "attach_pool_id" in data:
+        raw = data.get("attach_pool_id")
+        if raw is None or (isinstance(raw, str) and not raw.strip()):
+            attach_pool_id = None
+        else:
+            try:
+                attach_pool_id = int(raw)
+            except Exception as exc:
+                raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid attach_pool_id", status_code=400) from exc
+            if attach_pool_id <= 0:
+                raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid attach_pool_id", status_code=400)
+
+    attach_weight = 1
+    if "attach_weight" in data:
+        try:
+            attach_weight = int(data.get("attach_weight"))
+        except Exception as exc:
+            raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid attach_weight", status_code=400) from exc
+        if attach_weight < 0 or attach_weight > 1000:
+            raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid attach_weight", status_code=400)
+
+    recompute_bindings = False
+    if "recompute_bindings" in data:
+        v = _parse_bool_strict(data.get("recompute_bindings"))
+        if v is None:
+            raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid recompute_bindings", status_code=400)
+        recompute_bindings = bool(v)
+
+    max_tokens_per_proxy = 2
+    if "max_tokens_per_proxy" in data:
+        try:
+            max_tokens_per_proxy = int(data.get("max_tokens_per_proxy"))
+        except Exception as exc:
+            raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid max_tokens_per_proxy", status_code=400) from exc
+        if max_tokens_per_proxy <= 0 or max_tokens_per_proxy > 1000:
+            raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid max_tokens_per_proxy", status_code=400)
+
+    strict = True
+    if "strict" in data:
+        v = _parse_bool_strict(data.get("strict"))
+        if v is None:
+            raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid strict", status_code=400)
+        strict = bool(v)
+
     conflict_policy = _parse_easy_conflict_policy(data.get("conflict_policy"))
-    return {"base_url": base_url, "password": password, "conflict_policy": conflict_policy}
+    if recompute_bindings and attach_pool_id is None:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="recompute_bindings requires attach_pool_id", status_code=400)
+    return {
+        "base_url": base_url,
+        "password": password,
+        "conflict_policy": conflict_policy,
+        "host_override": host_override,
+        "attach_pool_id": attach_pool_id,
+        "attach_weight": int(attach_weight),
+        "recompute_bindings": bool(recompute_bindings),
+        "max_tokens_per_proxy": int(max_tokens_per_proxy),
+        "strict": bool(strict),
+    }
 
 
 async def _load_probe_json(request: Request) -> dict[str, Any]:
@@ -471,18 +537,27 @@ async def import_easy_proxies(
     rid = get_or_create_request_id(request)
     body = await _load_easy_import_json(request)
 
-    base_url = str(body["base_url"])
+    base_url_raw = str(body["base_url"])
+    base_url = _sanitize_source_ref(base_url_raw) or base_url_raw
     password = str(body["password"])
     conflict_policy = str(body["conflict_policy"])
+    host_override = body.get("host_override")
+    attach_pool_id = body.get("attach_pool_id")
+    attach_weight = int(body.get("attach_weight", 1))
+    recompute_bindings = bool(body.get("recompute_bindings", False))
+    max_tokens_per_proxy = int(body.get("max_tokens_per_proxy", 2))
+    strict = bool(body.get("strict", True))
+
+    export_host = resolve_export_host(base_url=base_url_raw, host_override=host_override)
 
     transport = getattr(request.app.state, "httpx_transport", None)
 
     try:
         bearer_token: str | None = None
         if password.strip():
-            auth = await easy_proxies_auth(base_url=base_url, password=password, transport=transport)
+            auth = await easy_proxies_auth(base_url=base_url_raw, password=password, transport=transport)
             bearer_token = auth.token
-        uris = await easy_proxies_export(base_url=base_url, bearer_token=bearer_token, transport=transport)
+        uris = await easy_proxies_export(base_url=base_url_raw, bearer_token=bearer_token, transport=transport)
     except EasyProxiesError as exc:
         raise ApiError(code=ErrorCode.INTERNAL_ERROR, message="easy_proxies import failed", status_code=502) from exc
     except Exception as exc:
@@ -495,6 +570,8 @@ async def import_easy_proxies(
     invalid_uris: list[str] = []
     duplicates = 0
     invalid = 0
+    placeholder_hosts = 0
+    rewritten_hosts = 0
     for raw in uris:
         uri = (raw or "").strip()
         if not uri:
@@ -505,17 +582,28 @@ async def import_easy_proxies(
             invalid += 1
             invalid_uris.append(uri)
             continue
-        key = (str(parsed.scheme), str(parsed.host), int(parsed.port), str((parsed.username or "").strip()))
+
+        desired_host, rewrote = normalize_exported_proxy_host(exported_host=str(parsed.host), export_host=export_host)
+        if str(parsed.host or "").strip().lower() in {"0.0.0.0", "127.0.0.1", "localhost", "::", "::1"}:
+            placeholder_hosts += 1
+        if rewrote:
+            rewritten_hosts += 1
+
+        key = (str(parsed.scheme), str(desired_host), int(parsed.port), str((parsed.username or "").strip()))
         if key in seen_keys:
             duplicates += 1
             continue
         seen_keys.add(key)
         deduped.append(uri)
 
-    uris = deduped + invalid_uris
+    uris = deduped
     if duplicates > 0:
         warnings.append(f"检测到导出结果包含重复入口（已去重 {duplicates} 条）。")
-    if raw_count > 1 and len(uris) <= 1:
+    if placeholder_hosts > 0 and rewritten_hosts <= 0:
+        warnings.append("检测到 easy_proxies 导出 host 为 0.0.0.0/127.0.0.1/localhost 等占位符，但无法确定可用的替换 host；请检查 base_url 或使用 host_override。")
+    if rewritten_hosts > 0 and export_host:
+        warnings.append(f"检测到 easy_proxies 导出 host 为占位符，已自动替换为 {export_host}。")
+    if raw_count > 1 and len(deduped) <= 1:
         warnings.append("当前 easy_proxies 可能处于 pool 模式（所有节点共享同一入口端口），导入后只会得到一个入口。若要每节点独立端口，请在 easy_proxies 启用 multi-port 或 hybrid 模式后再导入。")
     if invalid > 0:
         warnings.append(f"有 {invalid} 条导出内容不是合法代理 URI，已跳过。")
@@ -524,6 +612,10 @@ async def import_easy_proxies(
     updated = 0
     skipped = 0
     errors: list[dict[str, Any]] = []
+    attach_created = 0
+    attach_updated = 0
+    attach_total = 0
+    binding_result: dict[str, Any] | None = None
 
     now = iso_utc_ms()
 
@@ -534,9 +626,9 @@ async def import_easy_proxies(
     encryptor: FieldEncryptor | None = None
 
     async def _op() -> None:
-        nonlocal created, updated, skipped, errors, encryptor
+        nonlocal created, updated, skipped, errors, encryptor, attach_created, attach_updated, attach_total, binding_result
         async with Session() as session:
-            for uri in uris:
+            for uri in deduped + invalid_uris:
                 try:
                     parsed = parse_proxy_uri(uri)
                 except Exception:
@@ -560,12 +652,18 @@ async def import_easy_proxies(
                             continue
                     password_enc = encryptor.encrypt_text(password_v)
 
+                desired_host, rewrote = normalize_exported_proxy_host(
+                    exported_host=str(parsed.host),
+                    export_host=export_host,
+                )
+                original_host = str(parsed.host)
+
                 existing = (
                     (
                         await session.execute(
                             sa.select(ProxyEndpoint).where(
                                 ProxyEndpoint.scheme == parsed.scheme,
-                                ProxyEndpoint.host == parsed.host,
+                                ProxyEndpoint.host == desired_host,
                                 ProxyEndpoint.port == int(parsed.port),
                                 ProxyEndpoint.username == username,
                             )
@@ -575,11 +673,36 @@ async def import_easy_proxies(
                     .first()
                 )
 
+                moved_from_placeholder = False
+                if existing is None and rewrote and desired_host and desired_host != original_host:
+                    placeholder = (
+                        (
+                            await session.execute(
+                                sa.select(ProxyEndpoint).where(
+                                    ProxyEndpoint.scheme == parsed.scheme,
+                                    ProxyEndpoint.host == original_host,
+                                    ProxyEndpoint.port == int(parsed.port),
+                                    ProxyEndpoint.username == username,
+                                )
+                            )
+                        )
+                        .scalars()
+                        .first()
+                    )
+                    if placeholder is not None:
+                        can_update_placeholder = conflict_policy == "overwrite" or (
+                            conflict_policy == "skip_non_easy_proxies" and (placeholder.source or "") == "easy_proxies"
+                        )
+                        if can_update_placeholder:
+                            existing = placeholder
+                            existing.host = desired_host
+                            moved_from_placeholder = True
+
                 if existing is None:
                     session.add(
                         ProxyEndpoint(
                             scheme=parsed.scheme,
-                            host=parsed.host,
+                            host=desired_host or original_host,
                             port=int(parsed.port),
                             username=username,
                             password_enc=password_enc,
@@ -593,7 +716,24 @@ async def import_easy_proxies(
                     continue
 
                 if conflict_policy == "skip_non_easy_proxies" and (existing.source or "") != "easy_proxies":
-                    skipped += 1
+                    if moved_from_placeholder:
+                        # can't update, but the desired host identity is new; create a new easy_proxies entry
+                        session.add(
+                            ProxyEndpoint(
+                                scheme=parsed.scheme,
+                                host=desired_host or original_host,
+                                port=int(parsed.port),
+                                username=username,
+                                password_enc=password_enc,
+                                enabled=1,
+                                source="easy_proxies",
+                                source_ref=base_url,
+                                updated_at=now,
+                            )
+                        )
+                        created += 1
+                    else:
+                        skipped += 1
                     continue
                 if conflict_policy == "skip":
                     skipped += 1
@@ -606,11 +746,69 @@ async def import_easy_proxies(
                 existing.updated_at = now
                 updated += 1
 
+            if attach_pool_id is not None:
+                pool = await session.get(ProxyPool, int(attach_pool_id))
+                if pool is None:
+                    raise ApiError(code=ErrorCode.NOT_FOUND, message="Proxy pool not found", status_code=404)
+
+                endpoint_ids = (
+                    (
+                        await session.execute(
+                            sa.select(ProxyEndpoint.id)
+                            .where(ProxyEndpoint.source == "easy_proxies")
+                            .where(ProxyEndpoint.source_ref == base_url)
+                            .where(ProxyEndpoint.enabled == 1)
+                            .order_by(ProxyEndpoint.id.asc())
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                attach_total = len(endpoint_ids)
+                if endpoint_ids:
+                    existing_members = (
+                        (
+                            await session.execute(
+                                sa.select(ProxyPoolEndpoint.endpoint_id)
+                                .where(ProxyPoolEndpoint.pool_id == int(attach_pool_id))
+                                .where(ProxyPoolEndpoint.endpoint_id.in_([int(x) for x in endpoint_ids]))
+                            )
+                        )
+                        .scalars()
+                        .all()
+                    )
+                    existing_set = {int(x) for x in existing_members}
+                    attach_created = len([x for x in endpoint_ids if int(x) not in existing_set])
+                    attach_updated = len([x for x in endpoint_ids if int(x) in existing_set])
+
+                    for endpoint_id in endpoint_ids:
+                        stmt = sqlite_insert(ProxyPoolEndpoint).values(
+                            pool_id=int(attach_pool_id),
+                            endpoint_id=int(endpoint_id),
+                            enabled=1,
+                            weight=int(attach_weight),
+                            updated_at=now,
+                        )
+                        stmt = stmt.on_conflict_do_update(
+                            index_elements=[ProxyPoolEndpoint.pool_id, ProxyPoolEndpoint.endpoint_id],
+                            set_={"enabled": 1, "weight": int(attach_weight), "updated_at": now},
+                        )
+                        await session.execute(stmt)
+
+                if recompute_bindings:
+                    binding_result = await recompute_token_proxy_bindings(
+                        session,
+                        pool_id=int(attach_pool_id),
+                        now=str(now),
+                        max_tokens_per_proxy=int(max_tokens_per_proxy),
+                        strict=bool(strict),
+                    )
+
             await session.commit()
 
     await with_sqlite_busy_retry(_op)
 
-    return {
+    resp: dict[str, Any] = {
         "ok": True,
         "created": created,
         "updated": updated,
@@ -619,6 +817,16 @@ async def import_easy_proxies(
         "warnings": warnings[:50],
         "request_id": rid,
     }
+    if attach_pool_id is not None:
+        resp["attach"] = {
+            "pool_id": str(attach_pool_id),
+            "endpoints_total": int(attach_total),
+            "created": int(attach_created),
+            "updated": int(attach_updated),
+        }
+    if binding_result is not None:
+        resp["bindings"] = {"pool_id": str(attach_pool_id), **binding_result}
+    return resp
 
 
 @router.post("/proxies/probe")

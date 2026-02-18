@@ -205,3 +205,89 @@ def test_job_handler_easy_proxies_import_uses_env_password_when_missing(tmp_path
         await engine.dispose()
 
     asyncio.run(_run())
+
+
+def test_job_handler_easy_proxies_import_rewrites_placeholder_host(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "handler_easy_proxies_import_rewrite_host.db"
+    engine = create_engine(_sqlite_url(db_path))
+
+    field_key = Fernet.generate_key().decode("ascii")
+    encryptor = FieldEncryptor.from_key(field_key)
+
+    monkeypatch.setenv("APP_ENV", "dev")
+    monkeypatch.setenv("FIELD_ENCRYPTION_KEY", field_key)
+
+    base_url = "http://easy-proxies:9090"
+    password = "pw"
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if str(req.url) == f"{base_url}/api/auth":
+            return httpx.Response(200, json={"token": "t"})
+        if str(req.url) == f"{base_url}/api/export":
+            assert req.headers.get("Authorization") == "Bearer t"
+            return httpx.Response(200, text="http://u:p@0.0.0.0:8080\n")
+        return httpx.Response(500, text="unexpected")
+
+    transport = httpx.MockTransport(handler)
+
+    async def _run() -> None:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        Session = create_sessionmaker(engine)
+        async with Session() as session:
+            session.add(
+                ProxyEndpoint(
+                    scheme="http",
+                    host="0.0.0.0",
+                    port=8080,
+                    username="u",
+                    password_enc=encryptor.encrypt_text("old"),
+                    enabled=1,
+                    source="easy_proxies",
+                    source_ref=base_url,
+                )
+            )
+            session.add(
+                JobRow(
+                    type="easy_proxies_import",
+                    status="pending",
+                    payload_json=json.dumps(
+                        {
+                            "base_url": base_url,
+                            "password": password,
+                            "conflict_policy": "skip_non_easy_proxies",
+                        },
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                )
+            )
+            await session.commit()
+
+        dispatcher = JobDispatcher()
+        dispatcher.register(
+            "easy_proxies_import",
+            build_easy_proxies_import_handler(engine, transport=transport),
+        )
+
+        claimed = await claim_next_job(engine, worker_id="w1")
+        assert claimed is not None
+        transition = await execute_claimed_job(engine, dispatcher, job_row=claimed, worker_id="w1")
+        assert transition is not None
+        assert transition.status.value == "completed"
+
+        async with Session() as session:
+            endpoints = (
+                (await session.execute(sa.select(ProxyEndpoint).order_by(ProxyEndpoint.id.asc())))
+                .scalars()
+                .all()
+            )
+            assert len(endpoints) == 1
+            row = endpoints[0]
+            assert row.host == "easy-proxies"
+            assert int(row.port) == 8080
+
+        await engine.dispose()
+
+    asyncio.run(_run())

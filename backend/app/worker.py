@@ -172,11 +172,54 @@ async def main_async(*, max_iterations: int | None = None, poll_interval_s: floa
 
         conflict_policy = (os.environ.get("EASY_PROXIES_CONFLICT_POLICY") or "skip_non_easy_proxies").strip()
 
+        host_override = (os.environ.get("EASY_PROXIES_HOST_OVERRIDE") or "").strip() or None
+
+        raw_attach = (os.environ.get("EASY_PROXIES_AUTO_ATTACH") or "").strip().lower()
+        auto_attach_disabled = raw_attach in {"0", "false", "no", "n", "off"}
+
+        attach_pool_id: int | None = None
+        raw_attach_pool = (os.environ.get("EASY_PROXIES_ATTACH_POOL_ID") or "").strip()
+        if raw_attach_pool:
+            try:
+                attach_pool_id = int(raw_attach_pool)
+            except Exception:
+                attach_pool_id = None
+            if attach_pool_id is not None and int(attach_pool_id) <= 0:
+                attach_pool_id = None
+
+        attach_weight = _parse_int_env(
+            "EASY_PROXIES_ATTACH_WEIGHT",
+            default=1,
+            min_v=0,
+            max_v=1000,
+        )
+
+        raw_recompute = (os.environ.get("EASY_PROXIES_AUTO_RECOMPUTE_BINDINGS") or "").strip().lower()
+        recompute_disabled = raw_recompute in {"0", "false", "no", "n", "off"}
+        recompute_bindings = not recompute_disabled
+
+        max_tokens_per_proxy = _parse_int_env(
+            "EASY_PROXIES_MAX_TOKENS_PER_PROXY",
+            default=2,
+            min_v=1,
+            max_v=1000,
+        )
+
+        raw_strict = (os.environ.get("EASY_PROXIES_BINDINGS_STRICT") or "").strip().lower()
+        strict = raw_strict in {"1", "true", "yes", "y", "on"}
+
         refresher = EasyProxiesAutoRefresher(
             EasyProxiesAutoRefreshConfig(
                 base_url=base_url,
                 interval_s=interval_s,
                 conflict_policy=conflict_policy or "skip_non_easy_proxies",
+                host_override=host_override,
+                auto_attach=not auto_attach_disabled,
+                attach_pool_id=attach_pool_id,
+                attach_weight=int(attach_weight),
+                recompute_bindings=bool(recompute_bindings),
+                max_tokens_per_proxy=int(max_tokens_per_proxy),
+                strict=bool(strict),
             )
         )
         if refresher.enabled:

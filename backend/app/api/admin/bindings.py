@@ -9,6 +9,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import aliased
 
 from app.api.admin.deps import get_admin_claims
+from app.core.bindings_recompute import recompute_token_proxy_bindings
 from app.core.errors import ApiError, ErrorCode
 from app.core.request_id import get_or_create_request_id
 from app.core.time import iso_utc_ms
@@ -294,116 +295,16 @@ async def recompute_bindings(
             if pool is None:
                 raise ApiError(code=ErrorCode.NOT_FOUND, message="Proxy pool not found", status_code=404)
 
-            proxy_ids = (
-                (
-                    await session.execute(
-                        sa.select(ProxyPoolEndpoint.endpoint_id, ProxyPoolEndpoint.weight)
-                        .join(ProxyEndpoint, ProxyEndpoint.id == ProxyPoolEndpoint.endpoint_id)
-                        .where(ProxyPoolEndpoint.pool_id == pool_id)
-                        .where(ProxyPoolEndpoint.enabled == 1)
-                        .where(ProxyEndpoint.enabled == 1)
-                        .order_by(ProxyPoolEndpoint.endpoint_id.asc())
-                    )
-                )
-                .all()
+            result = await recompute_token_proxy_bindings(
+                session,
+                pool_id=int(pool_id),
+                now=str(now),
+                max_tokens_per_proxy=int(max_tokens_per_proxy),
+                strict=bool(strict),
             )
-
-            proxies: list[tuple[int, int]] = []
-            for endpoint_id, weight in proxy_ids:
-                try:
-                    eid = int(endpoint_id)
-                except Exception:
-                    continue
-                try:
-                    w = int(weight or 0)
-                except Exception:
-                    w = 0
-                if eid <= 0:
-                    continue
-                proxies.append((eid, w))
-
-            capacity_by_proxy_id = {pid: int(max_tokens_per_proxy) * max(0, int(w)) for pid, w in proxies}
-            proxy_ids_norm = [pid for pid, _w in proxies if capacity_by_proxy_id.get(pid, 0) > 0]
-            weight_sum = sum(max(0, int(w)) for _pid, w in proxies if int(_pid) in set(proxy_ids_norm))
-
-            if not proxy_ids_norm:
-                raise ApiError(code=ErrorCode.BAD_REQUEST, message="No enabled proxies in pool", status_code=400)
-
-            token_ids = (
-                (await session.execute(sa.select(PixivToken.id).order_by(PixivToken.id.asc())))
-                .scalars()
-                .all()
-            )
-            if not token_ids:
-                return {"ok": True, "pool_id": str(pool_id), "recomputed": 0, "request_id": rid}
-
-            capacity = sum(int(capacity_by_proxy_id.get(int(pid), 0)) for pid in proxy_ids_norm)
-            if strict and len(token_ids) > capacity:
-                raise ApiError(
-                    code=ErrorCode.BAD_REQUEST,
-                    message="代理容量不足（请增加节点或调高单代理最多绑定令牌数）",
-                    status_code=400,
-                    details={
-                        "token_count": len(token_ids),
-                        "proxy_count": len(proxy_ids_norm),
-                        "max_tokens_per_proxy": max_tokens_per_proxy,
-                        "weight_sum": int(weight_sum),
-                        "capacity": int(capacity),
-                    },
-                )
-
-            salt = f"pool:{pool_id}"
-            over_capacity_assigned = 0
-            if strict:
-                assignments = _compute_primary_assignments(
-                    token_ids=token_ids,
-                    proxy_ids=proxy_ids_norm,
-                    capacity_by_proxy_id=capacity_by_proxy_id,
-                    salt=salt,
-                )
-            else:
-                assignments, over_capacity_assigned = _compute_primary_assignments_soft(
-                    token_ids=token_ids,
-                    proxy_ids=proxy_ids_norm,
-                    capacity_by_proxy_id=capacity_by_proxy_id,
-                    salt=salt,
-                )
-
-            for token_id in token_ids:
-                primary_proxy_id = assignments.get(token_id)
-                if primary_proxy_id is None:
-                    raise ApiError(code=ErrorCode.INTERNAL_ERROR, message="Binding recompute failed", status_code=500)
-
-                stmt = sqlite_insert(TokenProxyBinding).values(
-                    token_id=int(token_id),
-                    pool_id=int(pool_id),
-                    primary_proxy_id=int(primary_proxy_id),
-                    override_proxy_id=None,
-                    override_expires_at=None,
-                    updated_at=now,
-                )
-                stmt = stmt.on_conflict_do_update(
-                    index_elements=[TokenProxyBinding.token_id, TokenProxyBinding.pool_id],
-                    set_={"primary_proxy_id": int(primary_proxy_id), "updated_at": now},
-                )
-                await session.execute(stmt)
-
             await session.commit()
 
-        resp: dict[str, Any] = {"ok": True, "pool_id": str(pool_id), "recomputed": len(token_ids), "request_id": rid}
-        if not strict:
-            resp.update(
-                {
-                    "strict": False,
-                    "over_capacity_assigned": int(over_capacity_assigned),
-                    "capacity": int(capacity),
-                    "token_count": len(token_ids),
-                    "proxy_count": len(proxy_ids_norm),
-                    "max_tokens_per_proxy": int(max_tokens_per_proxy),
-                    "weight_sum": int(weight_sum),
-                }
-            )
-        return resp
+        return {"ok": True, "pool_id": str(pool_id), "request_id": rid, **result}
 
     return await with_sqlite_busy_retry(_op)
 

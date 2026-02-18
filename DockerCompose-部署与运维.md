@@ -174,6 +174,13 @@ services:
 - `EASY_PROXIES_PASSWORD=***`
 - `EASY_PROXIES_AUTO_REFRESH=true`
 - `EASY_PROXIES_REFRESH_INTERVAL_MS=1800000`
+- `EASY_PROXIES_AUTO_ATTACH=true`（默认 true；导入后自动加入代理池）
+- `EASY_PROXIES_ATTACH_POOL_ID=1`（可选；不填则自动选第一个启用的代理池）
+- `EASY_PROXIES_ATTACH_WEIGHT=1`（可选；默认 1）
+- `EASY_PROXIES_AUTO_RECOMPUTE_BINDINGS=true`（默认 true；导入后自动重算 token↔proxy 绑定）
+- `EASY_PROXIES_MAX_TOKENS_PER_PROXY=2`（可选；默认 2）
+- `EASY_PROXIES_BINDINGS_STRICT=false`（可选；默认 false；更稳健，不因容量不足而失败）
+- `EASY_PROXIES_HOST_OVERRIDE=152.53.91.30`（可选；当导出 host 是 `0.0.0.0/127.0.0.1/localhost` 等占位符时，用于强制指定可连接的 host；不填则默认使用 `EASY_PROXIES_BASE_URL` 的 host）
 
 ### 4.5 imgproxy（可选；生产强烈建议开启签名）
 - `IMGPROXY_BASE_URL=http://imgproxy:8080`（你的 imgproxy 服务地址）

@@ -22,6 +22,16 @@ describe("ProxiesPage", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
+        if (url.endsWith("/admin/api/proxy-pools")) {
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              items: [{ id: "1", name: "pixiv", description: null, enabled: true }],
+              request_id: "req_pools_1",
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
         if (url.endsWith("/admin/api/proxies/endpoints")) {
           endpointsCalls += 1;
           return new Response(
@@ -76,6 +86,11 @@ describe("ProxiesPage", () => {
           expect(body.base_url).toBe("http://easy.test");
           expect(body.password).toBe("pw_test");
           expect(body.conflict_policy).toBe("skip_non_easy_proxies");
+          expect(body.attach_pool_id).toBe(1);
+          expect(body.attach_weight).toBe(1);
+          expect(body.recompute_bindings).toBe(true);
+          expect(body.max_tokens_per_proxy).toBe(2);
+          expect(body.strict).toBe(false);
           return new Response(
             JSON.stringify({ ok: true, created: 1, updated: 0, skipped: 0, errors: [], request_id: "req_easy" }),
             { status: 200, headers: { "Content-Type": "application/json" } },
