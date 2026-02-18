@@ -211,7 +211,7 @@ export function HydrationPage() {
 
   const hydrationStats = summary.data?.counts.hydration;
   const enabledImagesTotal = hydrationStats?.enabled_images_total ?? 0;
-  const missingCounts = hydrationStats?.missing ?? {};
+  const missingCounts = useMemo(() => hydrationStats?.missing ?? {}, [hydrationStats?.missing]);
 
   const missingOptionsWithCounts = useMemo(() => {
     return MISSING_OPTIONS.map((opt) => {

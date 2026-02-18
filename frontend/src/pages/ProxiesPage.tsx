@@ -333,13 +333,13 @@ export function ProxiesPage() {
         conflict_policy: values.conflict_policy,
       };
       if (String(values.host_override || "").trim()) payload.host_override = String(values.host_override || "").trim();
-      if (Boolean(values.bootstrap)) {
+      if (values.bootstrap) {
         if (typeof values.attach_pool_id === "number") payload.attach_pool_id = values.attach_pool_id;
         if (typeof values.attach_weight === "number") payload.attach_weight = values.attach_weight;
         payload.recompute_bindings = values.recompute_bindings !== false;
         if (payload.recompute_bindings) {
           if (typeof values.max_tokens_per_proxy === "number") payload.max_tokens_per_proxy = values.max_tokens_per_proxy;
-          payload.strict = Boolean(values.strict);
+          payload.strict = values.strict ?? false;
         }
       }
       return apiJson<EasyProxiesImportResponse>("/admin/api/proxies/easy-proxies/import", {
