@@ -130,6 +130,28 @@ async def _first_enabled_pool_id(engine: AsyncEngine) -> int | None:
     return await with_sqlite_busy_retry(_op)
 
 
+async def _list_enabled_pool_ids(engine: AsyncEngine) -> list[int]:
+    sql = "SELECT id FROM proxy_pools WHERE enabled=1 ORDER BY id ASC;"
+
+    async def _op() -> list[int]:
+        async with engine.connect() as conn:
+            rows = (await conn.exec_driver_sql(sql)).fetchall()
+        out: list[int] = []
+        seen: set[int] = set()
+        for (pid,) in rows:
+            try:
+                pool_id = int(pid)
+            except Exception:
+                continue
+            if pool_id <= 0 or pool_id in seen:
+                continue
+            seen.add(pool_id)
+            out.append(pool_id)
+        return out
+
+    return await with_sqlite_busy_retry(_op)
+
+
 async def _pool_health_stats(engine: AsyncEngine, *, pool_id: int, now_iso: str) -> dict[str, Any]:
     sql = """
 SELECT
@@ -374,11 +396,20 @@ async def select_proxy_uri_for_url(
     if not should_use_proxy_for_host(runtime, host=host):
         return None
 
-    pool_id = resolve_pool_id_for_host(runtime, host=host)
-    if pool_id is None:
-        pool_id = await _first_enabled_pool_id(engine)
+    now_iso = now_iso or iso_utc_ms()
 
-    if pool_id is None:
+    preferred_pool_id = resolve_pool_id_for_host(runtime, host=host)
+    enabled_pools = await _list_enabled_pool_ids(engine)
+
+    pool_candidates: list[int] = []
+    if preferred_pool_id is not None and int(preferred_pool_id) > 0:
+        pool_candidates.append(int(preferred_pool_id))
+
+    for pid in enabled_pools:
+        if pid not in pool_candidates:
+            pool_candidates.append(int(pid))
+
+    if not pool_candidates:
         if bool(runtime.proxy_fail_closed):
             raise ApiError(
                 code=ErrorCode.PROXY_REQUIRED,
@@ -392,77 +423,114 @@ async def select_proxy_uri_for_url(
             )
         return None
 
-    now_iso = now_iso or iso_utc_ms()
+    async def _select_in_pool(pool_id: int) -> ProxyUri | None:
+        if int(pool_id) <= 0:
+            return None
 
-    if token_id is not None and int(token_id) > 0:
-        binding = await _load_token_binding(engine, token_id=int(token_id), pool_id=int(pool_id))
-        if binding is not None:
-            primary_proxy_id, override_proxy_id, override_expires_at = binding
-            override_active = bool(
-                override_proxy_id is not None
-                and override_expires_at
-                and str(override_expires_at) > str(now_iso)
-            )
-
-            candidates: list[int] = []
-            if override_active and override_proxy_id is not None:
-                candidates.append(int(override_proxy_id))
-            candidates.append(int(primary_proxy_id))
-
-            for endpoint_id in candidates:
-                picked_by_binding = await _load_endpoint_in_pool(
-                    engine,
-                    pool_id=int(pool_id),
-                    endpoint_id=int(endpoint_id),
-                    now_iso=str(now_iso),
-                )
-                if picked_by_binding is None:
-                    continue
-
-                eid, scheme, host_v, port, username, password_enc = picked_by_binding
-                return _proxy_uri_from_endpoint_row(
-                    settings,
-                    endpoint_id=int(eid),
-                    pool_id=int(pool_id),
-                    scheme=scheme,
-                    host=host_v,
-                    port=int(port),
-                    username=username,
-                    password_enc=password_enc,
+        if token_id is not None and int(token_id) > 0:
+            binding = await _load_token_binding(engine, token_id=int(token_id), pool_id=int(pool_id))
+            if binding is not None:
+                primary_proxy_id, override_proxy_id, override_expires_at = binding
+                override_active = bool(
+                    override_proxy_id is not None
+                    and override_expires_at
+                    and str(override_expires_at) > str(now_iso)
                 )
 
-    picked = await _pick_endpoint_in_pool(engine, pool_id=int(pool_id), now_iso=now_iso)
-    if picked is None:
-        if bool(runtime.proxy_fail_closed):
-            stats = await _pool_health_stats(engine, pool_id=int(pool_id), now_iso=str(now_iso))
-            reason = "no_healthy_proxy_available"
-            if int(stats.get("endpoints_total") or 0) <= 0:
-                reason = "pool_has_no_endpoints"
-            elif int(stats.get("endpoints_eligible") or 0) <= 0 and stats.get("next_available_at"):
-                reason = "all_endpoints_blacklisted"
+                candidates: list[int] = []
+                if override_active and override_proxy_id is not None:
+                    candidates.append(int(override_proxy_id))
+                candidates.append(int(primary_proxy_id))
 
-            raise ApiError(
-                code=ErrorCode.PROXY_REQUIRED,
-                message="需要代理，但当前没有可用代理节点",
-                status_code=502,
-                details={
-                    "reason": reason,
-                    "host": host,
-                    "url": url,
-                    "pool_id": int(pool_id),
-                    **stats,
-                },
-            )
-        return None
+                for endpoint_id in candidates:
+                    picked_by_binding = await _load_endpoint_in_pool(
+                        engine,
+                        pool_id=int(pool_id),
+                        endpoint_id=int(endpoint_id),
+                        now_iso=str(now_iso),
+                    )
+                    if picked_by_binding is None:
+                        continue
 
-    endpoint_id, scheme, host_v, port, username, password_enc = picked
-    return _proxy_uri_from_endpoint_row(
-        settings,
-        endpoint_id=int(endpoint_id),
-        pool_id=int(pool_id),
-        scheme=scheme,
-        host=host_v,
-        port=int(port),
-        username=username,
-        password_enc=password_enc,
-    )
+                    eid, scheme, host_v, port, username, password_enc = picked_by_binding
+                    return _proxy_uri_from_endpoint_row(
+                        settings,
+                        endpoint_id=int(eid),
+                        pool_id=int(pool_id),
+                        scheme=scheme,
+                        host=host_v,
+                        port=int(port),
+                        username=username,
+                        password_enc=password_enc,
+                    )
+
+        picked = await _pick_endpoint_in_pool(engine, pool_id=int(pool_id), now_iso=now_iso)
+        if picked is None:
+            return None
+
+        endpoint_id, scheme, host_v, port, username, password_enc = picked
+        return _proxy_uri_from_endpoint_row(
+            settings,
+            endpoint_id=int(endpoint_id),
+            pool_id=int(pool_id),
+            scheme=scheme,
+            host=host_v,
+            port=int(port),
+            username=username,
+            password_enc=password_enc,
+        )
+
+    for candidate_pool_id in pool_candidates:
+        picked = await _select_in_pool(int(candidate_pool_id))
+        if picked is not None:
+            return picked
+
+    if bool(runtime.proxy_fail_closed):
+        pool_stats: list[dict[str, Any]] = []
+        next_available_at: str | None = None
+        total_any = 0
+        eligible_any = 0
+        any_next = False
+        for pid in pool_candidates:
+            stats = await _pool_health_stats(engine, pool_id=int(pid), now_iso=str(now_iso))
+            total = int(stats.get("endpoints_total") or 0)
+            eligible = int(stats.get("endpoints_eligible") or 0)
+            total_any += max(0, total)
+            eligible_any += max(0, eligible)
+            nxt = stats.get("next_available_at")
+            if isinstance(nxt, str) and nxt.strip():
+                any_next = True
+                if next_available_at is None or str(nxt) < str(next_available_at):
+                    next_available_at = str(nxt)
+            pool_stats.append({"pool_id": int(pid), **stats})
+
+        reason = "no_healthy_proxy_available"
+        if total_any <= 0:
+            reason = "pool_has_no_endpoints"
+        elif eligible_any <= 0 and any_next and next_available_at:
+            reason = "all_endpoints_blacklisted"
+
+        primary_pool_id = (
+            int(preferred_pool_id)
+            if preferred_pool_id is not None and int(preferred_pool_id) > 0
+            else int(pool_candidates[0])
+        )
+
+        raise ApiError(
+            code=ErrorCode.PROXY_REQUIRED,
+            message="需要代理，但当前没有可用代理节点",
+            status_code=502,
+            details={
+                "reason": reason,
+                "host": host,
+                "url": url,
+                "pool_id": primary_pool_id,
+                "attempted_pool_ids": [int(pid) for pid in pool_candidates],
+                "pools": pool_stats,
+                "endpoints_total": int(total_any),
+                "endpoints_eligible": int(eligible_any),
+                "next_available_at": next_available_at,
+            },
+        )
+
+    return None

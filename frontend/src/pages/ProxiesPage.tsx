@@ -11,6 +11,10 @@ type ProxyEndpointItem = {
   source: string;
   source_ref: string | null;
   enabled: boolean;
+  scheme?: string;
+  host?: string;
+  port?: number;
+  invalid_host?: boolean;
   latency_ms: number | null;
   status: string | null;
   blacklisted_until: string | null;
@@ -107,6 +111,19 @@ type ResetProxyEndpointFailuresResponse = {
   request_id: string;
 };
 
+type CleanupInvalidHostsResponse = {
+  ok: true;
+  dry_run: boolean;
+  invalid_hosts: string[];
+  matched: number;
+  disabled?: number;
+  memberships_removed?: number;
+  overrides_cleared?: number;
+  deleted?: number;
+  warnings?: string[];
+  request_id: string;
+};
+
 function requestIdFromError(err: unknown): string | null {
   if (!(err instanceof ApiError)) return null;
   return err.body?.request_id ? String(err.body.request_id) : null;
@@ -120,6 +137,17 @@ const columns = (actions: {
 }): ColumnsType<ProxyEndpointItem> => [
   { title: "节点ID", dataIndex: "id", key: "id" },
   { title: "代理地址（掩码）", dataIndex: "uri_masked", key: "uri_masked" },
+  {
+    title: "主机",
+    key: "host",
+    render: (_, row) => {
+      const host = String(row.host || "").trim();
+      const port = typeof row.port === "number" && Number.isFinite(row.port) ? row.port : null;
+      const invalid = Boolean(row.invalid_host);
+      const text = host ? (port ? `${host}:${port}` : host) : "-";
+      return invalid ? <Typography.Text type="danger">{text}（占位）</Typography.Text> : text;
+    },
+  },
   {
     title: "来源",
     dataIndex: "source",
@@ -243,8 +271,14 @@ export function ProxiesPage() {
 
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [actionRequestId, setActionRequestId] = useState<string | null>(null);
+  const [actionWarningMessage, setActionWarningMessage] = useState<string | null>(null);
   const [actionErrorMessage, setActionErrorMessage] = useState<string | null>(null);
   const [actionErrorRequestId, setActionErrorRequestId] = useState<string | null>(null);
+
+  const [cleanupRecomputeBindings, setCleanupRecomputeBindings] = useState<boolean>(true);
+  const [cleanupDeleteOrphans, setCleanupDeleteOrphans] = useState<boolean>(true);
+  const [cleanupMaxTokensPerProxy, setCleanupMaxTokensPerProxy] = useState<number>(2);
+  const [cleanupStrict, setCleanupStrict] = useState<boolean>(false);
 
   const updateEndpoint = useMutation({
     mutationFn: (payload: { endpointId: string; enabled: boolean }) =>
@@ -255,6 +289,7 @@ export function ProxiesPage() {
     onMutate: () => {
       setActionMessage(null);
       setActionRequestId(null);
+      setActionWarningMessage(null);
       setActionErrorMessage(null);
       setActionErrorRequestId(null);
     },
@@ -289,6 +324,7 @@ export function ProxiesPage() {
     onMutate: () => {
       setActionMessage(null);
       setActionRequestId(null);
+      setActionWarningMessage(null);
       setActionErrorMessage(null);
       setActionErrorRequestId(null);
     },
@@ -308,6 +344,54 @@ export function ProxiesPage() {
         return;
       }
       setActionErrorMessage("重置失败/解除拉黑失败");
+    },
+  });
+
+  const cleanupInvalidHosts = useMutation({
+    mutationFn: () =>
+      apiJson<CleanupInvalidHostsResponse>("/admin/api/proxies/endpoints/cleanup-invalid-hosts", {
+        method: "POST",
+        body: JSON.stringify({
+          recompute_bindings: cleanupRecomputeBindings,
+          delete_orphans: cleanupDeleteOrphans,
+          max_tokens_per_proxy: Math.max(1, Math.trunc(cleanupMaxTokensPerProxy || 2)),
+          strict: cleanupStrict,
+        }),
+      }),
+    onMutate: () => {
+      setActionMessage(null);
+      setActionRequestId(null);
+      setActionWarningMessage(null);
+      setActionErrorMessage(null);
+      setActionErrorRequestId(null);
+    },
+    onSuccess: (data) => {
+      const parts = [
+        `匹配: ${data.matched}`,
+        typeof data.disabled === "number" ? `禁用: ${data.disabled}` : null,
+        typeof data.memberships_removed === "number" ? `移除池成员: ${data.memberships_removed}` : null,
+        typeof data.overrides_cleared === "number" ? `清理覆盖绑定: ${data.overrides_cleared}` : null,
+        typeof data.deleted === "number" ? `删除: ${data.deleted}` : null,
+      ].filter(Boolean);
+      setActionMessage(`清理完成（${parts.join("，")}）`);
+      setActionRequestId(data.request_id);
+      if (Array.isArray(data.warnings) && data.warnings.length) {
+        setActionWarningMessage(data.warnings.slice(0, 10).join("；"));
+      }
+      queryClient.invalidateQueries({ queryKey: ["admin", "proxies", "endpoints"] });
+      queryClient.invalidateQueries({ queryKey: ["admin", "bindings"] });
+    },
+    onError: (err) => {
+      if (err instanceof ApiError) {
+        setActionErrorMessage(err.message);
+        setActionErrorRequestId(requestIdFromError(err));
+        return;
+      }
+      if (err instanceof Error) {
+        setActionErrorMessage(err.message);
+        return;
+      }
+      setActionErrorMessage("清理失败");
     },
   });
 
@@ -431,8 +515,41 @@ export function ProxiesPage() {
 
       {actionMessage ? <Alert type="success" showIcon message={actionMessage} /> : null}
       {actionRequestId ? <Typography.Text type="secondary">请求ID: {actionRequestId}</Typography.Text> : null}
+      {actionWarningMessage ? <Alert type="warning" showIcon message={actionWarningMessage} /> : null}
       {actionErrorMessage ? <Alert type="error" showIcon message={actionErrorMessage} /> : null}
       {actionErrorRequestId ? <Typography.Text type="secondary">请求ID: {actionErrorRequestId}</Typography.Text> : null}
+
+      <Card title="维护操作">
+        <Space wrap>
+          <Space>
+            <Typography.Text>重算 token 绑定</Typography.Text>
+            <Switch checked={cleanupRecomputeBindings} onChange={(v) => setCleanupRecomputeBindings(Boolean(v))} />
+          </Space>
+          <Space>
+            <Typography.Text>删除无引用节点</Typography.Text>
+            <Switch checked={cleanupDeleteOrphans} onChange={(v) => setCleanupDeleteOrphans(Boolean(v))} />
+          </Space>
+          <Space>
+            <Typography.Text>单代理最多绑定令牌数</Typography.Text>
+            <InputNumber
+              min={1}
+              max={1000}
+              value={cleanupMaxTokensPerProxy}
+              onChange={(v) => setCleanupMaxTokensPerProxy(Number(v) || 2)}
+            />
+          </Space>
+          <Space>
+            <Typography.Text>严格容量</Typography.Text>
+            <Switch checked={cleanupStrict} onChange={(v) => setCleanupStrict(Boolean(v))} />
+          </Space>
+          <Button type="primary" danger onClick={() => cleanupInvalidHosts.mutate()} loading={cleanupInvalidHosts.isPending}>
+            清理 0.0.0.0/localhost
+          </Button>
+        </Space>
+        <Typography.Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0 }}>
+          作用：禁用并从代理池移除无效占位主机（如 0.0.0.0/localhost），可选重算绑定与删除无引用记录。
+        </Typography.Paragraph>
+      </Card>
 
       <Card title="手动导入代理节点">
         {manualErrorMessage ? <Alert type="error" showIcon message={manualErrorMessage} /> : null}

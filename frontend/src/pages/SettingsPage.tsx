@@ -4,6 +4,19 @@ import React, { useEffect, useState } from "react";
 
 import { ApiError, apiJson } from "../api/client";
 
+type ProxyPoolItem = {
+  id: string;
+  name: string;
+  description: string | null;
+  enabled: boolean;
+};
+
+type ProxyPoolsListResponse = {
+  ok: true;
+  items: ProxyPoolItem[];
+  request_id: string;
+};
+
 type SettingsResponse = {
   ok: true;
   settings: Record<string, unknown>;
@@ -92,6 +105,11 @@ export function SettingsPage() {
   const query = useQuery({
     queryKey: ["admin", "settings"],
     queryFn: () => apiJson<SettingsResponse>("/admin/api/settings"),
+  });
+
+  const poolsQuery = useQuery({
+    queryKey: ["admin", "proxy-pools"],
+    queryFn: () => apiJson<ProxyPoolsListResponse>("/admin/api/proxy-pools"),
   });
 
   const [saveErrorMessage, setSaveErrorMessage] = useState<string | null>(null);
@@ -235,8 +253,21 @@ export function SettingsPage() {
             <Form.Item label="白名单域名" name="proxy_allowlist_domains">
               <Select mode="tags" style={{ maxWidth: 520 }} tokenSeparators={[",", "\n", " "]} placeholder="例如：example.com api.example.com" />
             </Form.Item>
-            <Form.Item label="默认代理池ID（0表示不指定）" name="proxy_default_pool_id">
-              <InputNumber min={0} max={1_000_000} style={{ width: 240 }} />
+            <Form.Item
+              label="默认代理池"
+              name="proxy_default_pool_id"
+              extra={poolsQuery.isError ? "代理池列表加载失败：可先到“代理池”页面创建。" : "不指定时会自动选择第一个启用的代理池。"}
+            >
+              <Select
+                style={{ maxWidth: 420 }}
+                loading={poolsQuery.isLoading}
+                options={[
+                  { value: 0, label: "不指定（自动选择）" },
+                  ...(poolsQuery.data?.items || [])
+                    .filter((p) => Boolean(p.enabled))
+                    .map((p) => ({ value: Number(p.id), label: `${p.name}(#${p.id})` })),
+                ]}
+              />
             </Form.Item>
 
             <Typography.Title level={5} style={{ marginTop: 12 }}>

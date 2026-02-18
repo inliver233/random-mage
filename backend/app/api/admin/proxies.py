@@ -152,6 +152,7 @@ async def list_proxy_endpoints(
                 override_counts[int(pid)] = int(c)
 
     now_iso = iso_utc_ms()
+    invalid_hosts = {"0.0.0.0", "127.0.0.1", "localhost", "::", "::1", "[::]", "[::1]"}
 
     items = [
         {
@@ -159,6 +160,10 @@ async def list_proxy_endpoints(
             "enabled": bool(p.enabled),
             "source": str(p.source or "manual"),
             "source_ref": _sanitize_source_ref(p.source_ref),
+            "scheme": str(p.scheme),
+            "host": str(p.host),
+            "port": int(p.port),
+            "invalid_host": str(p.host or "").strip().lower() in invalid_hosts,
             "uri_masked": _mask_proxy_uri(
                 scheme=str(p.scheme),
                 host=str(p.host),
@@ -385,6 +390,39 @@ async def _load_probe_json(request: Request) -> dict[str, Any]:
     return out
 
 
+async def _load_cleanup_invalid_hosts_json(request: Request) -> dict[str, Any]:
+    try:
+        data = await request.json()
+    except Exception:
+        return {}
+
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid JSON body", status_code=400)
+
+    out: dict[str, Any] = {}
+
+    for key in ("dry_run", "delete_orphans", "recompute_bindings", "strict"):
+        if key not in data:
+            continue
+        v = _parse_bool_strict(data.get(key))
+        if v is None:
+            raise ApiError(code=ErrorCode.BAD_REQUEST, message=f"Invalid {key}", status_code=400)
+        out[key] = bool(v)
+
+    if "max_tokens_per_proxy" in data:
+        try:
+            n = int(data.get("max_tokens_per_proxy"))
+        except Exception as exc:
+            raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid max_tokens_per_proxy", status_code=400) from exc
+        if n <= 0 or n > 1000:
+            raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid max_tokens_per_proxy", status_code=400)
+        out["max_tokens_per_proxy"] = int(n)
+
+    return out
+
+
 @router.post("/proxies/endpoints/import")
 async def import_proxy_endpoints(
     request: Request,
@@ -558,6 +596,168 @@ async def reset_proxy_failures(
         await session.commit()
 
     return {"ok": True, "endpoint_id": str(endpoint_id), "request_id": rid}
+
+
+@router.post("/proxies/endpoints/cleanup-invalid-hosts")
+async def cleanup_invalid_hosts(
+    request: Request,
+    _claims: dict[str, Any] = Depends(get_admin_claims),
+) -> dict[str, Any]:
+    _ = _claims
+    rid = get_or_create_request_id(request)
+
+    body = await _load_cleanup_invalid_hosts_json(request)
+    dry_run = bool(body.get("dry_run", False))
+    delete_orphans = bool(body.get("delete_orphans", False))
+    recompute_bindings = bool(body.get("recompute_bindings", True))
+    max_tokens_per_proxy = int(body.get("max_tokens_per_proxy", 2))
+    strict = bool(body.get("strict", False))
+
+    invalid_hosts = {"0.0.0.0", "127.0.0.1", "localhost", "::", "::1", "[::]", "[::1]"}
+
+    engine = request.app.state.engine
+    Session = create_sessionmaker(engine)
+    now = iso_utc_ms()
+
+    async with Session() as session:
+        endpoint_rows = (
+            (
+                await session.execute(
+                    sa.select(ProxyEndpoint.id, ProxyEndpoint.host)
+                    .where(sa.func.lower(sa.func.trim(ProxyEndpoint.host)).in_(sorted(invalid_hosts)))
+                    .order_by(ProxyEndpoint.id.asc())
+                )
+            )
+            .all()
+        )
+        endpoint_ids = [int(r[0]) for r in endpoint_rows]
+
+        affected_pool_ids: list[int] = []
+        if endpoint_ids:
+            pool_rows = (
+                (
+                    await session.execute(
+                        sa.select(sa.distinct(ProxyPoolEndpoint.pool_id))
+                        .where(ProxyPoolEndpoint.endpoint_id.in_(endpoint_ids))
+                        .order_by(ProxyPoolEndpoint.pool_id.asc())
+                    )
+                )
+                .all()
+            )
+            affected_pool_ids = [int(r[0]) for r in pool_rows]
+
+        if dry_run:
+            return {
+                "ok": True,
+                "dry_run": True,
+                "invalid_hosts": sorted(invalid_hosts),
+                "matched": len(endpoint_ids),
+                "endpoint_ids": [str(x) for x in endpoint_ids[:200]],
+                "affected_pool_ids": [str(x) for x in affected_pool_ids],
+                "request_id": rid,
+            }
+
+        disabled = 0
+        memberships_removed = 0
+        overrides_cleared = 0
+        deleted = 0
+        binding_results: list[dict[str, Any]] = []
+        warnings: list[str] = []
+
+        if endpoint_ids:
+            disabled = int(
+                (
+                    await session.execute(
+                        sa.update(ProxyEndpoint)
+                        .where(ProxyEndpoint.id.in_(endpoint_ids))
+                        .values(enabled=0, updated_at=now)
+                    )
+                ).rowcount
+                or 0
+            )
+
+            memberships_removed = int(
+                (
+                    await session.execute(
+                        sa.delete(ProxyPoolEndpoint).where(ProxyPoolEndpoint.endpoint_id.in_(endpoint_ids))
+                    )
+                ).rowcount
+                or 0
+            )
+
+            overrides_cleared = int(
+                (
+                    await session.execute(
+                        sa.update(TokenProxyBinding)
+                        .where(TokenProxyBinding.override_proxy_id.is_not(None))
+                        .where(TokenProxyBinding.override_proxy_id.in_(endpoint_ids))
+                        .values(override_proxy_id=None, override_expires_at=None, updated_at=now)
+                    )
+                ).rowcount
+                or 0
+            )
+
+        if recompute_bindings and affected_pool_ids:
+            for pid in affected_pool_ids:
+                try:
+                    result = await recompute_token_proxy_bindings(
+                        session,
+                        pool_id=int(pid),
+                        now=now,
+                        max_tokens_per_proxy=int(max_tokens_per_proxy),
+                        strict=bool(strict),
+                    )
+                except ApiError as exc:
+                    warnings.append(f"pool#{pid} 重算绑定失败: {exc.message}")
+                    continue
+                binding_results.append({"pool_id": str(pid), **result})
+
+        if delete_orphans and endpoint_ids:
+            refs_primary = (
+                (
+                    await session.execute(
+                        sa.select(sa.distinct(TokenProxyBinding.primary_proxy_id)).where(
+                            TokenProxyBinding.primary_proxy_id.in_(endpoint_ids)
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            refs_override = (
+                (
+                    await session.execute(
+                        sa.select(sa.distinct(TokenProxyBinding.override_proxy_id))
+                        .where(TokenProxyBinding.override_proxy_id.is_not(None))
+                        .where(TokenProxyBinding.override_proxy_id.in_(endpoint_ids))
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            referenced: set[int] = {int(x) for x in refs_primary if x is not None} | {int(x) for x in refs_override if x is not None}
+            deletable = [int(eid) for eid in endpoint_ids if int(eid) not in referenced]
+            if deletable:
+                deleted = int(
+                    (await session.execute(sa.delete(ProxyEndpoint).where(ProxyEndpoint.id.in_(deletable)))).rowcount or 0
+                )
+
+        await session.commit()
+
+    return {
+        "ok": True,
+        "dry_run": False,
+        "invalid_hosts": sorted(invalid_hosts),
+        "matched": len(endpoint_ids),
+        "disabled": int(disabled),
+        "memberships_removed": int(memberships_removed),
+        "overrides_cleared": int(overrides_cleared),
+        "deleted": int(deleted),
+        "affected_pool_ids": [str(x) for x in affected_pool_ids],
+        "bindings": binding_results,
+        "warnings": warnings,
+        "request_id": rid,
+    }
 
 
 @router.post("/proxies/easy-proxies/import")
