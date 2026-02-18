@@ -219,6 +219,54 @@ def build_hydrate_metadata_handler(
     token_cache = AccessTokenCache()
     choose_lock = asyncio.Lock()
     last_token_id: int | None = None
+    pixiv_throttle_lock = asyncio.Lock()
+    last_pixiv_request_m: float = 0.0
+
+    def _rate_limit_int(
+        runtime: RuntimeConfig,
+        key: str,
+        *,
+        default: int,
+        min_v: int,
+        max_v: int,
+    ) -> int:
+        raw = (runtime.rate_limit or {}).get(key)
+        try:
+            value = int(raw)
+        except Exception:
+            return int(default)
+        return max(int(min_v), min(int(value), int(max_v)))
+
+    async def _pixiv_throttle(runtime: RuntimeConfig) -> None:
+        nonlocal last_pixiv_request_m
+
+        default_min_ms = 800 if transport is None else 0
+        default_jitter_ms = 200 if transport is None else 0
+
+        min_interval_ms = _rate_limit_int(
+            runtime,
+            "pixiv_hydrate_min_interval_ms",
+            default=int(default_min_ms),
+            min_v=0,
+            max_v=60_000,
+        )
+        jitter_ms = _rate_limit_int(
+            runtime,
+            "pixiv_hydrate_jitter_ms",
+            default=int(default_jitter_ms),
+            min_v=0,
+            max_v=60_000,
+        )
+        if min_interval_ms <= 0 and jitter_ms <= 0:
+            return
+
+        async with pixiv_throttle_lock:
+            now_m = float(time.monotonic())
+            interval_s = (float(min_interval_ms) + random.random() * float(max(0, jitter_ms))) / 1000.0
+            wait_s = (last_pixiv_request_m + float(interval_s)) - now_m
+            if wait_s > 0:
+                await asyncio.sleep(float(wait_s))
+            last_pixiv_request_m = float(time.monotonic())
 
     def _as_int(value: Any, *, default: int = 0) -> int:
         try:
@@ -588,6 +636,7 @@ LIMIT 1;
             if picked_proxy is not None:
                 proxy_uri = picked_proxy.uri
 
+            await _pixiv_throttle(runtime)
             token = await refresh_access_token(
                 refresh_token=refresh_token,
                 config=oauth_config,
@@ -635,6 +684,7 @@ LIMIT 1;
         if proxy_uri:
             client_kwargs["proxy"] = proxy_uri
 
+        await _pixiv_throttle(runtime)
         async with httpx.AsyncClient(**client_kwargs) as client:
             resp = await client.get(
                 PIXIV_ILLUST_DETAIL_URL,

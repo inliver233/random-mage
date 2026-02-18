@@ -28,6 +28,8 @@ type SettingsFormValues = {
   random_strategy: "quality" | "random";
   random_quality_samples: number;
   security_hide_origin_url_in_public_json: boolean;
+  pixiv_hydrate_min_interval_ms: number;
+  pixiv_hydrate_jitter_ms: number;
 };
 
 const RANDOM_STRATEGY_VALUES = new Set<SettingsFormValues["random_strategy"]>(["quality", "random"]);
@@ -102,6 +104,7 @@ export function SettingsPage() {
     const proxy = asObject(settings.proxy);
     const random = asObject(settings.random);
     const security = asObject(settings.security);
+    const rateLimit = asObject(settings.rate_limit);
 
     const routeModeRaw = String(proxy.route_mode || "pixiv_only").trim().toLowerCase();
     const routeMode: SettingsFormValues["proxy_route_mode"] =
@@ -119,6 +122,8 @@ export function SettingsPage() {
       random_strategy: asLowerEnum(random.strategy, RANDOM_STRATEGY_VALUES, "quality"),
       random_quality_samples: asInt(random.quality_samples, 5),
       security_hide_origin_url_in_public_json: asBool(security.hide_origin_url_in_public_json, true),
+      pixiv_hydrate_min_interval_ms: asInt(rateLimit.pixiv_hydrate_min_interval_ms, 800),
+      pixiv_hydrate_jitter_ms: asInt(rateLimit.pixiv_hydrate_jitter_ms, 200),
     });
   }, [form, query.data]);
 
@@ -143,6 +148,10 @@ export function SettingsPage() {
               quality_samples: values.random_quality_samples,
             },
             security: { hide_origin_url_in_public_json: values.security_hide_origin_url_in_public_json },
+            rate_limit: {
+              pixiv_hydrate_min_interval_ms: Math.max(0, Math.trunc(values.pixiv_hydrate_min_interval_ms || 0)),
+              pixiv_hydrate_jitter_ms: Math.max(0, Math.trunc(values.pixiv_hydrate_jitter_ms || 0)),
+            },
           },
         }),
       }),
@@ -260,6 +269,24 @@ export function SettingsPage() {
             </Typography.Title>
             <Form.Item label="在公开 JSON 中隐藏原图 URL" name="security_hide_origin_url_in_public_json" valuePropName="checked">
               <Switch />
+            </Form.Item>
+
+            <Typography.Title level={5} style={{ marginTop: 12 }}>
+              补全任务设置
+            </Typography.Title>
+            <Form.Item
+              label="Pixiv 请求最小间隔（毫秒）"
+              name="pixiv_hydrate_min_interval_ms"
+              extra="每次补全任务请求 Pixiv（OAuth/作品详情）前至少等待该间隔。建议 300~2000。"
+            >
+              <InputNumber min={0} max={60_000} style={{ width: 240 }} />
+            </Form.Item>
+            <Form.Item
+              label="随机抖动（毫秒）"
+              name="pixiv_hydrate_jitter_ms"
+              extra="在最小间隔基础上增加 0~抖动 的随机等待，降低固定节奏触发风控的概率。"
+            >
+              <InputNumber min={0} max={60_000} style={{ width: 240 }} />
             </Form.Item>
           </Form>
         </Card>

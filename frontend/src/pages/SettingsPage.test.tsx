@@ -33,7 +33,9 @@ describe("SettingsPage", () => {
           expect(body.settings.random.strategy).toBe("quality");
           expect(body.settings.random.quality_samples).toBe(5);
           expect(body.settings.security.hide_origin_url_in_public_json).toBe(true);
-          return new Response(JSON.stringify({ ok: true, updated: 7, request_id: "req_save" }), {
+          expect(body.settings.rate_limit.pixiv_hydrate_min_interval_ms).toBe(800);
+          expect(body.settings.rate_limit.pixiv_hydrate_jitter_ms).toBe(200);
+          return new Response(JSON.stringify({ ok: true, updated: 9, request_id: "req_save" }), {
             status: 200,
             headers: { "Content-Type": "application/json" },
           });
@@ -93,7 +95,7 @@ describe("SettingsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: /保存设置/ }));
 
     expect(await screen.findByText("保存成功")).toBeInTheDocument();
-    expect(await screen.findByText(/更新条目数:\s*7/)).toBeInTheDocument();
+    expect(await screen.findByText(/更新条目数:\s*9/)).toBeInTheDocument();
     expect(await screen.findByText(/请求ID:\s*req_save/)).toBeInTheDocument();
   });
 });
