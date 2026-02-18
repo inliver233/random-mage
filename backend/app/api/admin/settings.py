@@ -15,6 +15,29 @@ from app.core.runtime_settings import (
 
 router = APIRouter()
 
+_DEFAULT_SCORE_WEIGHTS: dict[str, float] = {
+    "bookmark": 4.0,
+    "view": 0.5,
+    "comment": 2.0,
+    "pixels": 1.0,
+    "bookmark_rate": 3.0,
+}
+
+_DEFAULT_RECOMMENDATION: dict[str, Any] = {
+    "pick_mode": "weighted",
+    "temperature": 1.0,
+    "score_weights": dict(_DEFAULT_SCORE_WEIGHTS),
+    "multipliers": {
+        "ai": 1.0,
+        "non_ai": 1.0,
+        "unknown_ai": 1.0,
+        "illust": 1.0,
+        "manga": 1.0,
+        "ugoira": 1.0,
+        "unknown_illust_type": 1.0,
+    },
+}
+
 _DEFAULT_SETTINGS = {
     "random": {
         "default_attempts": 3,
@@ -22,6 +45,7 @@ _DEFAULT_SETTINGS = {
         "fail_cooldown_ms": 600_000,
         "strategy": "quality",
         "quality_samples": 5,
+        "recommendation": dict(_DEFAULT_RECOMMENDATION),
     },
     "proxy": {"allowlist_domains": []},
 }
@@ -57,6 +81,124 @@ def _as_bool(value: Any) -> bool | None:
     return None
 
 
+def _as_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
+def _normalize_recommendation(value: Any, *, strict: bool) -> dict[str, Any]:
+    if value is None:
+        return dict(_DEFAULT_RECOMMENDATION)
+    if not isinstance(value, dict):
+        if strict:
+            raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid random.recommendation", status_code=400)
+        return dict(_DEFAULT_RECOMMENDATION)
+
+    pick_mode_default = str(_DEFAULT_RECOMMENDATION["pick_mode"])
+    pick_mode_raw = value.get("pick_mode")
+    pick_mode = pick_mode_default
+    if pick_mode_raw is not None:
+        candidate = str(pick_mode_raw or "").strip().lower()
+        if candidate not in {"best", "weighted"}:
+            if strict:
+                raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid random.recommendation.pick_mode", status_code=400)
+        else:
+            pick_mode = candidate
+
+    temperature_default = float(_DEFAULT_RECOMMENDATION["temperature"])
+    temperature = temperature_default
+    if "temperature" in value:
+        v = _as_float(value.get("temperature"))
+        if v is None:
+            if strict:
+                raise ApiError(
+                    code=ErrorCode.BAD_REQUEST,
+                    message="Invalid random.recommendation.temperature",
+                    status_code=400,
+                )
+        else:
+            temperature = float(max(0.05, min(float(v), 100.0)))
+
+    score_weights_default = _DEFAULT_RECOMMENDATION["score_weights"]
+    score_weights_raw = value.get("score_weights")
+    if score_weights_raw is None:
+        score_weights_obj: dict[str, Any] = {}
+    elif not isinstance(score_weights_raw, dict):
+        if strict:
+            raise ApiError(
+                code=ErrorCode.BAD_REQUEST,
+                message="Invalid random.recommendation.score_weights",
+                status_code=400,
+            )
+        score_weights_obj = {}
+    else:
+        score_weights_obj = score_weights_raw
+        if strict:
+            for k in score_weights_obj.keys():
+                if str(k) not in _DEFAULT_SCORE_WEIGHTS:
+                    raise ApiError(
+                        code=ErrorCode.BAD_REQUEST,
+                        message="Invalid random.recommendation.score_weights",
+                        status_code=400,
+                    )
+
+    score_weights: dict[str, float] = {}
+    for key, default_value in _DEFAULT_SCORE_WEIGHTS.items():
+        if key in score_weights_obj:
+            v = _as_float(score_weights_obj.get(key))
+            if v is None:
+                if strict:
+                    raise ApiError(
+                        code=ErrorCode.BAD_REQUEST,
+                        message="Invalid random.recommendation.score_weights",
+                        status_code=400,
+                    )
+                v = float(default_value)
+            score_weights[key] = float(max(-100.0, min(float(v), 100.0)))
+        else:
+            score_weights[key] = float(default_value)
+
+    multipliers_default = _DEFAULT_RECOMMENDATION["multipliers"]
+    multipliers_raw = value.get("multipliers")
+    if multipliers_raw is None:
+        multipliers_obj: dict[str, Any] = {}
+    elif not isinstance(multipliers_raw, dict):
+        if strict:
+            raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid random.recommendation.multipliers", status_code=400)
+        multipliers_obj = {}
+    else:
+        multipliers_obj = multipliers_raw
+        if strict:
+            for k in multipliers_obj.keys():
+                if str(k) not in multipliers_default:
+                    raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid random.recommendation.multipliers", status_code=400)
+
+    multipliers: dict[str, float] = {}
+    for key, default_value in multipliers_default.items():
+        if key in multipliers_obj:
+            v = _as_float(multipliers_obj.get(key))
+            if v is None:
+                if strict:
+                    raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid random.recommendation.multipliers", status_code=400)
+                v = float(default_value)
+            multipliers[key] = float(max(0.0, min(float(v), 100.0)))
+        else:
+            multipliers[key] = float(default_value)
+
+    return {
+        "pick_mode": pick_mode,
+        "temperature": temperature,
+        "score_weights": score_weights,
+        "multipliers": multipliers,
+    }
+
+
 async def _load_settings_json(request: Request) -> dict[str, Any]:
     try:
         data = await request.json()
@@ -90,8 +232,13 @@ async def get_settings(
     random_defaults = dict(_DEFAULT_SETTINGS["random"])
     if isinstance(runtime.random_defaults, dict):
         for k in list(random_defaults.keys()):
+            if k == "recommendation":
+                continue
             if k in runtime.random_defaults:
                 random_defaults[k] = runtime.random_defaults[k]
+        random_defaults["recommendation"] = _normalize_recommendation(runtime.random_defaults.get("recommendation"), strict=False)
+    else:
+        random_defaults["recommendation"] = _normalize_recommendation(None, strict=False)
 
     return {
         "ok": True,
@@ -228,6 +375,9 @@ async def update_settings(
                 if v is None:
                     raise ApiError(code=ErrorCode.BAD_REQUEST, message=f"Invalid random.{key}", status_code=400)
                 defaults[key] = bool(v)
+
+        if "recommendation" in random:
+            defaults["recommendation"] = _normalize_recommendation(random.get("recommendation"), strict=True)
 
         if defaults:
             values = await fetch_runtime_settings(request.app.state.engine)
