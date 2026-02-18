@@ -72,6 +72,7 @@ Query：
 - `seed`: string（可选；可复现随机）
 - `strategy`: `quality|random`（默认 quality；quality 会“偏向高质量”）
 - `quality_samples`: `1..20`（默认 5；quality 策略下抽样候选数量）
+  - 说明：quality 策略的“评分权重/类别倍率/随机温度/选择模式”通过后台运行时设置 `random.defaults.recommendation` 配置（见 3.8 Settings）。
 
 筛选：
 - `r18`: `0|1|2`（默认 0）
@@ -109,6 +110,7 @@ Query：
       "height": 3508,
       "x_restrict": 0,
       "ai_type": 0,
+      "illust_type": 0,
       "bookmark_count": 123,
       "view_count": 4567,
       "comment_count": 89,
@@ -125,13 +127,29 @@ Query：
     },
     "debug": {
       "attempts_used": 1,
-      "picked_by": "quality",
+      "picked_by": "quality_weighted",
       "quality_samples": 5,
-      "quality_score": 12.34
+      "candidates_drawn": 7,
+      "candidates_accepted": 5,
+      "quality_pick_mode": "weighted",
+      "quality_temperature": 1.0,
+      "quality_score": 12.34,
+      "quality_multiplier": 1.0
     }
   }
 }
 ```
+
+字段说明（节选）：
+- `illust_type`：Pixiv 作品类型
+  - `0`=插画(illust)
+  - `1`=漫画(manga)
+  - `2`=动图(ugoira)
+  - `null`=未知/未补全
+- `debug.picked_by`：实际挑选路径
+  - `random_key`：纯随机（strategy=random）
+  - `quality_weighted`：质量加权随机（默认）
+  - `quality_best`：质量“直接取最高分”
 
 无匹配：
 ```json
@@ -376,6 +394,39 @@ Body：`{ "override_proxy_id": 10, "ttl_ms": 1200000, "reason": "manual_override
 - `random.defaults`
 - `security.hide_origin_url_in_public_json`
 - `rate_limit.*`
+
+`random.defaults.recommendation` 结构（示例）：
+```json
+{
+  "strategy": "quality",
+  "quality_samples": 5,
+  "recommendation": {
+    "pick_mode": "weighted",
+    "temperature": 1.0,
+    "score_weights": {
+      "bookmark": 4.0,
+      "view": 0.5,
+      "comment": 2.0,
+      "pixels": 1.0,
+      "bookmark_rate": 3.0
+    },
+    "multipliers": {
+      "ai": 1.0,
+      "non_ai": 1.0,
+      "unknown_ai": 1.0,
+      "illust": 1.0,
+      "manga": 1.0,
+      "ugoira": 1.0,
+      "unknown_illust_type": 1.0
+    }
+  }
+}
+```
+
+倍率常用示例：
+- AI 图降低概率：`multipliers.ai = 0.5`
+- 不返回漫画：`multipliers.manga = 0`
+- 只返回插画：`multipliers.manga = 0` 且 `multipliers.ugoira = 0`（并可将 `unknown_illust_type=0`）
 
 ---
 
