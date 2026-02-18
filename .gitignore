@@ -14,3 +14,9 @@ dist/
 data/
 backend/data/
 deploy/.env
+
+# Local temp / sensitive (do not commit)
+要求.txt
+_tmp_easy_export.txt
+_tmp_*.md
+_tmp_*.txt
