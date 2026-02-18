@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import random
+import math
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -14,7 +15,7 @@ from app.db.session import create_sessionmaker
 from app.main import create_app
 
 
-def test_random_quality_strategy_picks_best_of_sample(tmp_path: Path, monkeypatch) -> None:
+def test_random_quality_strategy_picks_weighted_by_score(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "random_quality_strategy.db"
     db_url = "sqlite+aiosqlite:///" + db_path.as_posix()
 
@@ -105,8 +106,7 @@ def test_random_quality_strategy_picks_best_of_sample(tmp_path: Path, monkeypatc
     async def _compute_expected_quality_pick() -> int:
         rng = random.Random(seed)
         exclude: set[int] = set()
-        best_id = 0
-        best_score = float("-inf")
+        candidates: list[tuple[int, float]] = []
 
         Session = create_sessionmaker(app.state.engine)
         async with Session() as session:
@@ -116,12 +116,20 @@ def test_random_quality_strategy_picks_best_of_sample(tmp_path: Path, monkeypatc
                     break
                 exclude.add(int(img.id))
                 score = _quality_score(img)
-                if best_id <= 0 or score > best_score:
-                    best_id = int(img.id)
-                    best_score = float(score)
+                candidates.append((int(img.id), float(score)))
 
-        assert best_id > 0
-        return int(best_id)
+        assert candidates
+        max_logit = max(s for _id, s in candidates)
+        weights = [math.exp(float(s) - float(max_logit)) for _id, s in candidates]
+        total = float(sum(weights))
+        assert total > 0
+
+        r = float(rng.random()) * total
+        for (img_id, _s), w in zip(candidates, weights, strict=True):
+            r -= float(w)
+            if r <= 0:
+                return int(img_id)
+        return int(candidates[-1][0])
 
     expected_quality_id = asyncio.run(_compute_expected_quality_pick())
 
@@ -140,7 +148,7 @@ def test_random_quality_strategy_picks_best_of_sample(tmp_path: Path, monkeypatc
         body = resp.json()
         assert body["ok"] is True
         assert int(body["data"]["image"]["id"]) == expected_quality_id
-        assert body["data"]["debug"]["picked_by"] == "quality"
+        assert body["data"]["debug"]["picked_by"] == "quality_weighted"
         assert body["data"]["debug"]["quality_samples"] == samples
         assert isinstance(body["data"]["debug"]["quality_score"], float)
 

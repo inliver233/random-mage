@@ -38,7 +38,49 @@ def _as_nonneg_int(value: Any) -> int:
     return i if i > 0 else 0
 
 
-def _quality_score(image: Any) -> float:
+_DEFAULT_SCORE_WEIGHTS: dict[str, float] = {
+    "bookmark": 4.0,
+    "view": 0.5,
+    "comment": 2.0,
+    "pixels": 1.0,
+    "bookmark_rate": 3.0,
+}
+
+_DEFAULT_RECOMMENDATION: dict[str, Any] = {
+    "pick_mode": "weighted",
+    "temperature": 1.0,
+    "score_weights": dict(_DEFAULT_SCORE_WEIGHTS),
+    "multipliers": {
+        "ai": 1.0,
+        "non_ai": 1.0,
+        "unknown_ai": 1.0,
+        "illust": 1.0,
+        "manga": 1.0,
+        "ugoira": 1.0,
+        "unknown_illust_type": 1.0,
+    },
+}
+
+
+def _as_float(value: Any, *, default: float) -> float:
+    if value is None:
+        return float(default)
+    if isinstance(value, bool):
+        return float(default)
+    try:
+        return float(value)
+    except Exception:
+        return float(default)
+
+
+def _quality_score(image: Any, *, weights: dict[str, float] | None = None) -> float:
+    w = weights or _DEFAULT_SCORE_WEIGHTS
+    w_bookmark = float(w.get("bookmark", _DEFAULT_SCORE_WEIGHTS["bookmark"]))
+    w_view = float(w.get("view", _DEFAULT_SCORE_WEIGHTS["view"]))
+    w_comment = float(w.get("comment", _DEFAULT_SCORE_WEIGHTS["comment"]))
+    w_pixels = float(w.get("pixels", _DEFAULT_SCORE_WEIGHTS["pixels"]))
+    w_bookmark_rate = float(w.get("bookmark_rate", _DEFAULT_SCORE_WEIGHTS["bookmark_rate"]))
+
     bookmark_count = _as_nonneg_int(getattr(image, "bookmark_count", None))
     view_count = _as_nonneg_int(getattr(image, "view_count", None))
     comment_count = _as_nonneg_int(getattr(image, "comment_count", None))
@@ -53,11 +95,11 @@ def _quality_score(image: Any) -> float:
         rate_term = math.log1p(max(0.0, bookmark_rate_per_mille))
 
     score = (
-        4.0 * math.log1p(bookmark_count)
-        + 0.5 * math.log1p(view_count)
-        + 2.0 * math.log1p(comment_count)
-        + 1.0 * math.log1p(float(pixels) / 1_000_000.0)
-        + 3.0 * rate_term
+        float(w_bookmark) * math.log1p(bookmark_count)
+        + float(w_view) * math.log1p(view_count)
+        + float(w_comment) * math.log1p(comment_count)
+        + float(w_pixels) * math.log1p(float(pixels) / 1_000_000.0)
+        + float(w_bookmark_rate) * rate_term
     )
     return float(score)
 
@@ -350,6 +392,35 @@ async def random_image(
         quality_samples_source = "fallback"
         quality_samples_i = 5
 
+    recommendation_raw = random_defaults.get("recommendation")
+    recommendation_source = "fallback"
+    recommendation_obj: dict[str, Any] = {}
+    if isinstance(recommendation_raw, dict):
+        recommendation_source = "runtime"
+        recommendation_obj = dict(recommendation_raw)
+
+    pick_mode_raw = str(recommendation_obj.get("pick_mode") or _DEFAULT_RECOMMENDATION["pick_mode"]).strip().lower()
+    if pick_mode_raw not in {"best", "weighted"}:
+        pick_mode_raw = str(_DEFAULT_RECOMMENDATION["pick_mode"])
+
+    temperature_raw = _as_float(recommendation_obj.get("temperature"), default=float(_DEFAULT_RECOMMENDATION["temperature"]))
+    temperature = float(max(0.05, min(float(temperature_raw), 100.0)))
+
+    score_weights_raw = recommendation_obj.get("score_weights")
+    score_weights_obj = score_weights_raw if isinstance(score_weights_raw, dict) else {}
+    score_weights: dict[str, float] = {}
+    for key, default_value in _DEFAULT_SCORE_WEIGHTS.items():
+        v = _as_float(score_weights_obj.get(key), default=float(default_value))
+        score_weights[key] = float(max(-100.0, min(float(v), 100.0)))
+
+    multipliers_default = _DEFAULT_RECOMMENDATION["multipliers"]
+    multipliers_raw = recommendation_obj.get("multipliers")
+    multipliers_obj = multipliers_raw if isinstance(multipliers_raw, dict) else {}
+    multipliers: dict[str, float] = {}
+    for key, default_value in multipliers_default.items():
+        v = _as_float(multipliers_obj.get(key), default=float(default_value))
+        multipliers[key] = float(max(0.0, min(float(v), 100.0)))
+
     debug_base = {
         "attempts": int(attempts_i),
         "attempts_source": attempts_source,
@@ -361,6 +432,7 @@ async def random_image(
         "strategy_source": strategy_source,
         "quality_samples": int(quality_samples_i),
         "quality_samples_source": quality_samples_source,
+        "recommendation_source": recommendation_source,
     }
 
     async def _pick_with_strategy(
@@ -374,12 +446,39 @@ async def random_image(
                 return None, {**debug_base, "attempts_used": 1, "picked_by": "random_key"}
             return image, {**debug_base, "attempts_used": 1, "picked_by": "random_key"}
 
-        exclude_set: set[int] = set(int(x) for x in exclude_image_ids or [])
-        sampled = 0
-        best_image: Any | None = None
-        best_score = float("-inf")
+        def _multiplier_for_image(image: Any) -> float:
+            m = 1.0
 
-        for _ in range(int(quality_samples_i)):
+            ai = getattr(image, "ai_type", None)
+            if ai == 1:
+                m *= float(multipliers.get("ai", 1.0))
+            elif ai == 0:
+                m *= float(multipliers.get("non_ai", 1.0))
+            else:
+                m *= float(multipliers.get("unknown_ai", 1.0))
+
+            it = getattr(image, "illust_type", None)
+            if it == 0:
+                m *= float(multipliers.get("illust", 1.0))
+            elif it == 1:
+                m *= float(multipliers.get("manga", 1.0))
+            elif it == 2:
+                m *= float(multipliers.get("ugoira", 1.0))
+            else:
+                m *= float(multipliers.get("unknown_illust_type", 1.0))
+
+            if not math.isfinite(float(m)) or float(m) <= 0.0:
+                return 0.0
+            return float(m)
+
+        exclude_set: set[int] = set(int(x) for x in exclude_image_ids or [])
+        drawn = 0
+        accepted = 0
+
+        candidates: list[tuple[Any, float, float, float]] = []
+        max_draws = max(int(quality_samples_i) * 5, 20)
+
+        for _ in range(int(max_draws)):
             image = await pick_random_image(
                 session,
                 r=rng.random(),
@@ -389,28 +488,64 @@ async def random_image(
             if image is None:
                 break
             exclude_set.add(int(image.id))
-            sampled += 1
-            score = _quality_score(image)
-            if best_image is None or score > best_score:
-                best_image = image
-                best_score = float(score)
+            drawn += 1
+            score = _quality_score(image, weights=score_weights)
+            multiplier = _multiplier_for_image(image)
+            if multiplier <= 0.0:
+                continue
 
-        if best_image is None:
+            logit = float(score) / float(temperature) + math.log(float(multiplier))
+            candidates.append((image, float(score), float(multiplier), float(logit)))
+            accepted += 1
+            if accepted >= int(quality_samples_i):
+                break
+
+        if not candidates:
             return None, {
                 **debug_base,
                 "attempts_used": 1,
-                "picked_by": "quality",
-                "candidates_sampled": sampled,
+                "picked_by": "quality_weighted" if pick_mode_raw == "weighted" else "quality_best",
+                "candidates_drawn": int(drawn),
+                "candidates_accepted": int(accepted),
+                "quality_pick_mode": pick_mode_raw,
+                "quality_temperature": float(temperature),
             }
+
+        if pick_mode_raw == "best":
+            picked = max(candidates, key=lambda x: x[3])
+            picked_by = "quality_best"
+        else:
+            max_logit = max(x[3] for x in candidates)
+            weights = [math.exp(float(x[3]) - float(max_logit)) for x in candidates]
+            total = float(sum(weights))
+            if not math.isfinite(total) or total <= 0.0:
+                picked = max(candidates, key=lambda x: x[3])
+                picked_by = "quality_best"
+            else:
+                r = float(rng.random()) * total
+                idx = 0
+                for i, w in enumerate(weights):
+                    r -= float(w)
+                    if r <= 0:
+                        idx = i
+                        break
+                picked = candidates[int(max(0, min(idx, len(candidates) - 1)))]
+                picked_by = "quality_weighted"
+
+        best_image, best_score, best_multiplier, _best_logit = picked
 
         return (
             best_image,
             {
                 **debug_base,
                 "attempts_used": 1,
-                "picked_by": "quality",
-                "candidates_sampled": sampled,
+                "picked_by": picked_by,
+                "candidates_drawn": int(drawn),
+                "candidates_accepted": int(accepted),
+                "quality_pick_mode": pick_mode_raw,
+                "quality_temperature": float(temperature),
                 "quality_score": float(best_score),
+                "quality_multiplier": float(best_multiplier),
             },
         )
 
@@ -420,6 +555,7 @@ async def random_image(
             or getattr(image, "height", None) is None
             or getattr(image, "x_restrict", None) is None
             or getattr(image, "ai_type", None) is None
+            or getattr(image, "illust_type", None) is None
             or getattr(image, "user_id", None) is None
             or getattr(image, "bookmark_count", None) is None
             or getattr(image, "view_count", None) is None
@@ -482,6 +618,7 @@ async def random_image(
                         "height": image.height,
                         "x_restrict": image.x_restrict,
                         "ai_type": image.ai_type,
+                        "illust_type": getattr(image, "illust_type", None),
                         "bookmark_count": getattr(image, "bookmark_count", None),
                         "view_count": getattr(image, "view_count", None),
                         "comment_count": getattr(image, "comment_count", None),
@@ -511,6 +648,7 @@ async def random_image(
                     "height": image.height,
                     "x_restrict": image.x_restrict,
                     "ai_type": image.ai_type,
+                    "illust_type": getattr(image, "illust_type", None),
                     "bookmark_count": getattr(image, "bookmark_count", None),
                     "view_count": getattr(image, "view_count", None),
                     "comment_count": getattr(image, "comment_count", None),
