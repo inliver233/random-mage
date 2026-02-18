@@ -69,6 +69,12 @@ describe("ProxiesPage", () => {
             headers: { "Content-Type": "application/json" },
           });
         }
+        if (url.endsWith("/admin/api/proxies/endpoints/1/reset-failures") && init?.method === "POST") {
+          return new Response(JSON.stringify({ ok: true, endpoint_id: "1", request_id: "req_reset" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
         if (url.endsWith("/admin/api/proxies/endpoints/import")) {
           expect(init?.method).toBe("POST");
           const body = init?.body ? JSON.parse(String(init.body)) : {};
@@ -193,5 +199,20 @@ describe("ProxiesPage", () => {
     expect(await screen.findByText(/代理节点已禁用：1/)).toBeInTheDocument();
     expect(await screen.findByText(/请求ID:\s*req_toggle/)).toBeInTheDocument();
     expect(await screen.findByText("否")).toBeInTheDocument();
+  });
+
+  it("resets endpoint failures", async () => {
+    const qc = makeClient();
+    render(
+      <QueryClientProvider client={qc}>
+        <ProxiesPage />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("代理管理")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "解除拉黑" }));
+
+    expect(await screen.findByText(/代理节点已重置失败并解除拉黑：1/)).toBeInTheDocument();
+    expect(await screen.findByText(/请求ID:\s*req_reset/)).toBeInTheDocument();
   });
 });

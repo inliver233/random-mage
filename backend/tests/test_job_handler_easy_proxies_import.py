@@ -246,6 +246,9 @@ def test_job_handler_easy_proxies_import_rewrites_placeholder_host(tmp_path: Pat
                     enabled=1,
                     source="easy_proxies",
                     source_ref=base_url,
+                    failure_count=7,
+                    blacklisted_until="2099-01-01T00:00:00Z",
+                    last_error="ConnectError: old",
                 )
             )
             session.add(
@@ -287,6 +290,8 @@ def test_job_handler_easy_proxies_import_rewrites_placeholder_host(tmp_path: Pat
             row = endpoints[0]
             assert row.host == "easy-proxies"
             assert int(row.port) == 8080
+            assert row.blacklisted_until is None
+            assert row.last_error is None
 
         await engine.dispose()
 

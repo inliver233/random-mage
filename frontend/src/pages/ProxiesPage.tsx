@@ -101,6 +101,12 @@ type UpdateProxyEndpointResponse = {
   request_id: string;
 };
 
+type ResetProxyEndpointFailuresResponse = {
+  ok: true;
+  endpoint_id: string;
+  request_id: string;
+};
+
 function requestIdFromError(err: unknown): string | null {
   if (!(err instanceof ApiError)) return null;
   return err.body?.request_id ? String(err.body.request_id) : null;
@@ -108,7 +114,9 @@ function requestIdFromError(err: unknown): string | null {
 
 const columns = (actions: {
   onToggleEnabled: (row: ProxyEndpointItem) => void;
+  onResetFailures: (row: ProxyEndpointItem) => void;
   updatePendingId: string | null;
+  resetPendingId: string | null;
 }): ColumnsType<ProxyEndpointItem> => [
   { title: "节点ID", dataIndex: "id", key: "id" },
   { title: "代理地址（掩码）", dataIndex: "uri_masked", key: "uri_masked" },
@@ -176,9 +184,19 @@ const columns = (actions: {
     title: "操作",
     key: "actions",
     render: (_, row) => (
-      <Button size="small" onClick={() => actions.onToggleEnabled(row)} loading={actions.updatePendingId === row.id}>
-        {row.enabled ? "禁用" : "启用"}
-      </Button>
+      <Space size="small">
+        <Button size="small" onClick={() => actions.onToggleEnabled(row)} loading={actions.updatePendingId === row.id}>
+          {row.enabled ? "禁用" : "启用"}
+        </Button>
+        <Button
+          size="small"
+          onClick={() => actions.onResetFailures(row)}
+          loading={actions.resetPendingId === row.id}
+          disabled={!row.blacklisted_until && row.failure_count <= 0}
+        >
+          解除拉黑
+        </Button>
+      </Space>
     ),
   },
 ];
@@ -256,6 +274,40 @@ export function ProxiesPage() {
         return;
       }
       setActionErrorMessage("代理节点更新失败");
+    },
+  });
+
+  const resetEndpointFailures = useMutation({
+    mutationFn: (payload: { endpointId: string }) =>
+      apiJson<ResetProxyEndpointFailuresResponse>(
+        `/admin/api/proxies/endpoints/${encodeURIComponent(payload.endpointId)}/reset-failures`,
+        {
+          method: "POST",
+          body: JSON.stringify({}),
+        },
+      ),
+    onMutate: () => {
+      setActionMessage(null);
+      setActionRequestId(null);
+      setActionErrorMessage(null);
+      setActionErrorRequestId(null);
+    },
+    onSuccess: (data) => {
+      setActionMessage(`代理节点已重置失败并解除拉黑：${data.endpoint_id}`);
+      setActionRequestId(data.request_id);
+      queryClient.invalidateQueries({ queryKey: ["admin", "proxies", "endpoints"] });
+    },
+    onError: (err) => {
+      if (err instanceof ApiError) {
+        setActionErrorMessage(err.message);
+        setActionErrorRequestId(requestIdFromError(err));
+        return;
+      }
+      if (err instanceof Error) {
+        setActionErrorMessage(err.message);
+        return;
+      }
+      setActionErrorMessage("重置失败/解除拉黑失败");
     },
   });
 
@@ -657,6 +709,8 @@ export function ProxiesPage() {
               columns={columns({
                 onToggleEnabled: (row) => updateEndpoint.mutate({ endpointId: row.id, enabled: !row.enabled }),
                 updatePendingId: updateEndpoint.isPending ? updateEndpoint.variables?.endpointId ?? null : null,
+                onResetFailures: (row) => resetEndpointFailures.mutate({ endpointId: row.id }),
+                resetPendingId: resetEndpointFailures.isPending ? resetEndpointFailures.variables?.endpointId ?? null : null,
               })}
               dataSource={query.data.items}
               pagination={false}

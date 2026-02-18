@@ -528,6 +528,38 @@ async def update_proxy_endpoint(
     return {"ok": True, "endpoint_id": str(endpoint_id), "enabled": enabled, "request_id": rid}
 
 
+@router.post("/proxies/endpoints/{endpoint_id}/reset-failures")
+async def reset_proxy_failures(
+    endpoint_id: int,
+    request: Request,
+    _claims: dict[str, Any] = Depends(get_admin_claims),
+) -> dict[str, Any]:
+    _ = _claims
+    if endpoint_id <= 0:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid endpoint id", status_code=400)
+
+    rid = get_or_create_request_id(request)
+    now = iso_utc_ms()
+
+    engine = request.app.state.engine
+    Session = create_sessionmaker(engine)
+
+    async with Session() as session:
+        row = await session.get(ProxyEndpoint, endpoint_id)
+        if row is None:
+            raise ApiError(code=ErrorCode.NOT_FOUND, message="Proxy endpoint not found", status_code=404)
+
+        row.failure_count = 0
+        row.blacklisted_until = None
+        row.last_fail_at = None
+        row.last_error = None
+        row.updated_at = now
+
+        await session.commit()
+
+    return {"ok": True, "endpoint_id": str(endpoint_id), "request_id": rid}
+
+
 @router.post("/proxies/easy-proxies/import")
 async def import_easy_proxies(
     request: Request,
@@ -743,6 +775,9 @@ async def import_easy_proxies(
                 existing.enabled = 1
                 existing.source = "easy_proxies"
                 existing.source_ref = base_url
+                # easy-proxies export only contains currently-healthy endpoints; clear local blacklist so they can be used immediately.
+                existing.blacklisted_until = None
+                existing.last_error = None
                 existing.updated_at = now
                 updated += 1
 

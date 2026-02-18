@@ -235,6 +235,9 @@ def build_easy_proxies_import_handler(engine: AsyncEngine, *, transport: httpx.B
                     existing.enabled = 1
                     existing.source = "easy_proxies"
                     existing.source_ref = base_url_ref
+                    # easy-proxies export only contains currently-healthy endpoints; clear local blacklist so they can be used immediately.
+                    existing.blacklisted_until = None
+                    existing.last_error = None
                     existing.updated_at = now
 
                 if attach_pool_id is not None:
