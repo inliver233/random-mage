@@ -400,10 +400,13 @@ async def select_proxy_uri_for_url(
 
     preferred_pool_id = resolve_pool_id_for_host(runtime, host=host)
     enabled_pools = await _list_enabled_pool_ids(engine)
+    enabled_pool_set = {int(pid) for pid in enabled_pools}
 
     pool_candidates: list[int] = []
     if preferred_pool_id is not None and int(preferred_pool_id) > 0:
-        pool_candidates.append(int(preferred_pool_id))
+        preferred_pool_id_i = int(preferred_pool_id)
+        if preferred_pool_id_i in enabled_pool_set:
+            pool_candidates.append(preferred_pool_id_i)
 
     for pid in enabled_pools:
         if pid not in pool_candidates:

@@ -349,3 +349,108 @@ def test_select_proxy_uri_for_url_prefers_last_ok_over_fail(tmp_path: Path, monk
 
     uri = asyncio.run(_run())
     assert uri == "http://1.1.1.1:8080"
+
+
+def test_select_proxy_uri_for_url_ignores_disabled_preferred_pool(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "proxy_pool_routing_disabled_preferred.db"
+    db_url = "sqlite+aiosqlite:///" + db_path.as_posix()
+
+    monkeypatch.setenv("APP_ENV", "dev")
+    monkeypatch.setenv("DATABASE_URL", db_url)
+
+    app = create_app()
+
+    async def _seed() -> tuple[int, int]:
+        async with app.state.engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        Session = create_sessionmaker(app.state.engine)
+        async with Session() as session:
+            disabled_pool = ProxyPool(name="disabled", description=None, enabled=0)
+            enabled_pool = ProxyPool(name="enabled", description=None, enabled=1)
+            session.add_all([disabled_pool, enabled_pool])
+            await session.flush()
+
+            disabled_ep = ProxyEndpoint(
+                scheme="http",
+                host="1.1.1.1",
+                port=8000,
+                username="",
+                password_enc="",
+                enabled=1,
+                source="manual",
+                source_ref=None,
+            )
+            enabled_ep = ProxyEndpoint(
+                scheme="http",
+                host="2.2.2.2",
+                port=8001,
+                username="",
+                password_enc="",
+                enabled=1,
+                source="manual",
+                source_ref=None,
+            )
+            session.add_all([disabled_ep, enabled_ep])
+            await session.flush()
+
+            session.add_all(
+                [
+                    ProxyPoolEndpoint(
+                        pool_id=int(disabled_pool.id),
+                        endpoint_id=int(disabled_ep.id),
+                        enabled=1,
+                        weight=1,
+                    ),
+                    ProxyPoolEndpoint(
+                        pool_id=int(enabled_pool.id),
+                        endpoint_id=int(enabled_ep.id),
+                        enabled=1,
+                        weight=1,
+                    ),
+                ]
+            )
+
+            session.add_all(
+                [
+                    RuntimeSetting(key="proxy.enabled", value_json="true", description=None, updated_by=None),
+                    RuntimeSetting(key="proxy.fail_closed", value_json="true", description=None, updated_by=None),
+                    RuntimeSetting(
+                        key="proxy.route_mode",
+                        value_json=json.dumps("all", separators=(",", ":"), ensure_ascii=False),
+                        description=None,
+                        updated_by=None,
+                    ),
+                    RuntimeSetting(
+                        key="proxy.default_pool_id",
+                        value_json=str(int(disabled_pool.id)),
+                        description=None,
+                        updated_by=None,
+                    ),
+                    RuntimeSetting(
+                        key="proxy.route_pools",
+                        value_json=json.dumps({"i.pximg.net": int(disabled_pool.id)}, separators=(",", ":"), ensure_ascii=False),
+                        description=None,
+                        updated_by=None,
+                    ),
+                ]
+            )
+            await session.commit()
+            return int(disabled_pool.id), int(enabled_pool.id)
+
+    _disabled_id, enabled_id = asyncio.run(_seed())
+
+    async def _run() -> tuple[str, int]:
+        runtime = await load_runtime_config(app.state.engine)
+        picked = await select_proxy_uri_for_url(
+            app.state.engine,
+            app.state.settings,
+            runtime,
+            url="https://i.pximg.net/img-original/img/2020/01/01/00/00/00/12345678_p0.jpg",
+        )
+        assert picked is not None
+        return picked.uri, int(picked.pool_id)
+
+    uri, pool_id = asyncio.run(_run())
+    assert uri == "http://2.2.2.2:8001"
+    assert pool_id == enabled_id
