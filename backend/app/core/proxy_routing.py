@@ -169,7 +169,7 @@ WHERE pp.id = :pool_id AND pp.enabled = 1;
 
 async def _pick_endpoint_in_pool(engine: AsyncEngine, *, pool_id: int, now_iso: str) -> tuple[int, str, str, int, str, str] | None:
     sql = """
-SELECT pe.id, pe.scheme, pe.host, pe.port, pe.username, pe.password_enc, ppe.weight
+SELECT pe.id, pe.scheme, pe.host, pe.port, pe.username, pe.password_enc, ppe.weight, pe.last_ok_at, pe.last_fail_at
 FROM proxy_pools pp
 JOIN proxy_pool_endpoints ppe
   ON ppe.pool_id = pp.id AND ppe.enabled = 1
@@ -184,7 +184,24 @@ ORDER BY pe.id ASC;
         async with engine.connect() as conn:
             result = await conn.exec_driver_sql(sql, {"pool_id": int(pool_id), "now": now_iso})
             rows = result.fetchall()
-        weighted: list[tuple[int, int]] = [(int(r[0]), int(r[6] or 0)) for r in rows]
+        ok_weighted: list[tuple[int, int]] = []
+        unknown_weighted: list[tuple[int, int]] = []
+        fail_weighted: list[tuple[int, int]] = []
+
+        for r in rows:
+            endpoint_id = int(r[0])
+            weight = int(r[6] or 0)
+            last_ok_at = str(r[7]).strip() if r[7] is not None else ""
+            last_fail_at = str(r[8]).strip() if r[8] is not None else ""
+
+            if last_ok_at and (not last_fail_at or last_ok_at >= last_fail_at):
+                ok_weighted.append((endpoint_id, weight))
+            elif not last_ok_at and not last_fail_at:
+                unknown_weighted.append((endpoint_id, weight))
+            else:
+                fail_weighted.append((endpoint_id, weight))
+
+        weighted = ok_weighted or unknown_weighted or fail_weighted
         chosen_id = _weighted_choice(weighted)
         if chosen_id is None:
             return None

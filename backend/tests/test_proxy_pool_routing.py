@@ -185,3 +185,93 @@ def test_select_proxy_uri_for_url_proxy_required_includes_pool_stats_when_all_bl
         assert exc.details.get("next_available_at") == blacklisted_until
 
     asyncio.run(_run())
+
+
+def test_select_proxy_uri_for_url_prefers_last_ok_over_fail(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "proxy_pool_routing_prefers_ok.db"
+    db_url = "sqlite+aiosqlite:///" + db_path.as_posix()
+
+    monkeypatch.setenv("APP_ENV", "dev")
+    monkeypatch.setenv("DATABASE_URL", db_url)
+
+    app = create_app()
+
+    async def _seed() -> None:
+        async with app.state.engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        Session = create_sessionmaker(app.state.engine)
+        async with Session() as session:
+            pool = ProxyPool(name="pool1", description=None, enabled=1)
+            session.add(pool)
+            await session.flush()
+
+            ok_ep = ProxyEndpoint(
+                scheme="http",
+                host="1.1.1.1",
+                port=8080,
+                username="",
+                password_enc="",
+                enabled=1,
+                source="manual",
+                source_ref=None,
+                last_ok_at="2026-02-18T00:00:00Z",
+                last_fail_at=None,
+            )
+            fail_ep = ProxyEndpoint(
+                scheme="http",
+                host="2.2.2.2",
+                port=8081,
+                username="",
+                password_enc="",
+                enabled=1,
+                source="manual",
+                source_ref=None,
+                last_ok_at=None,
+                last_fail_at="2026-02-18T01:00:00Z",
+            )
+            session.add_all([ok_ep, fail_ep])
+            await session.flush()
+
+            session.add_all(
+                [
+                    ProxyPoolEndpoint(pool_id=int(pool.id), endpoint_id=int(ok_ep.id), enabled=1, weight=1),
+                    ProxyPoolEndpoint(pool_id=int(pool.id), endpoint_id=int(fail_ep.id), enabled=1, weight=1),
+                ]
+            )
+
+            session.add_all(
+                [
+                    RuntimeSetting(key="proxy.enabled", value_json="true", description=None, updated_by=None),
+                    RuntimeSetting(key="proxy.fail_closed", value_json="true", description=None, updated_by=None),
+                    RuntimeSetting(
+                        key="proxy.route_mode",
+                        value_json=json.dumps("all", separators=(",", ":"), ensure_ascii=False),
+                        description=None,
+                        updated_by=None,
+                    ),
+                    RuntimeSetting(
+                        key="proxy.default_pool_id",
+                        value_json=str(int(pool.id)),
+                        description=None,
+                        updated_by=None,
+                    ),
+                ]
+            )
+            await session.commit()
+
+    asyncio.run(_seed())
+
+    async def _run() -> str:
+        runtime = await load_runtime_config(app.state.engine)
+        picked = await select_proxy_uri_for_url(
+            app.state.engine,
+            app.state.settings,
+            runtime,
+            url="https://i.pximg.net/img-original/img/2020/01/01/00/00/00/12345678_p0.jpg",
+        )
+        assert picked is not None
+        return picked.uri
+
+    uri = asyncio.run(_run())
+    assert uri == "http://1.1.1.1:8080"
