@@ -148,6 +148,8 @@ async def list_proxy_endpoints(
                     continue
                 override_counts[int(pid)] = int(c)
 
+    now_iso = iso_utc_ms()
+
     items = [
         {
             "id": str(p.id),
@@ -164,7 +166,7 @@ async def list_proxy_endpoints(
             "latency_ms": float(p.last_latency_ms) if p.last_latency_ms is not None else None,
             "status": (
                 "blacklisted"
-                if p.blacklisted_until
+                if (p.blacklisted_until and str(p.blacklisted_until) > str(now_iso))
                 else "ok"
                 if p.last_ok_at and (not p.last_fail_at or str(p.last_ok_at) >= str(p.last_fail_at))
                 else "fail"

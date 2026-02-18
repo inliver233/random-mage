@@ -401,6 +401,17 @@ def build_hydrate_metadata_handler(
         retry_dt = datetime.now(timezone.utc) + timedelta(seconds=float(delay_s))
         return iso_utc_ms(retry_dt)
 
+    def _defer_run_after_for_exc(exc: BaseException, *, now_epoch: float) -> str:
+        if isinstance(exc, ApiError) and exc.code == ErrorCode.PROXY_REQUIRED:
+            details = exc.details or {}
+            next_available_at_raw = details.get("next_available_at")
+            if isinstance(next_available_at_raw, str):
+                next_available_at = next_available_at_raw.strip()
+                epoch = _parse_iso_utc_to_epoch(next_available_at, now_epoch=now_epoch)
+                if epoch is not None and float(epoch) > float(now_epoch):
+                    return next_available_at
+        return _recoverable_defer_run_after_iso()
+
     def _rate_limit_int(
         runtime: RuntimeConfig,
         key: str,
@@ -1154,7 +1165,7 @@ LIMIT 1;
                         code = last_exc.code
                     raise JobDeferError(
                         f"{code.value}: 代理/网络异常，稍后重试",
-                        run_after=_recoverable_defer_run_after_iso(),
+                        run_after=_defer_run_after_for_exc(last_exc, now_epoch=now_epoch),
                     ) from last_exc
                 raise
             tried.add(int(token_id))
@@ -1358,7 +1369,7 @@ LIMIT 1;
                 code = last_exc.code
             raise JobDeferError(
                 f"{code.value}: 代理/网络异常，稍后重试",
-                run_after=_recoverable_defer_run_after_iso(),
+                run_after=_defer_run_after_for_exc(last_exc, now_epoch=now_epoch),
             ) from last_exc
         raise last_exc
 

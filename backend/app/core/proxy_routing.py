@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
+from typing import Any
 from urllib.parse import urlparse
 from urllib.parse import quote
 
@@ -125,6 +126,43 @@ async def _first_enabled_pool_id(engine: AsyncEngine) -> int | None:
             result = await conn.exec_driver_sql(sql)
             value = result.scalar_one_or_none()
             return int(value) if value is not None else None
+
+    return await with_sqlite_busy_retry(_op)
+
+
+async def _pool_health_stats(engine: AsyncEngine, *, pool_id: int, now_iso: str) -> dict[str, Any]:
+    sql = """
+SELECT
+  COUNT(*) AS endpoints_total,
+  COALESCE(SUM(CASE
+    WHEN pe.blacklisted_until IS NULL OR pe.blacklisted_until <= :now THEN 1
+    ELSE 0
+  END), 0) AS endpoints_eligible,
+  MIN(CASE
+    WHEN pe.blacklisted_until > :now THEN pe.blacklisted_until
+    ELSE NULL
+  END) AS next_available_at
+FROM proxy_pools pp
+JOIN proxy_pool_endpoints ppe
+  ON ppe.pool_id = pp.id AND ppe.enabled = 1
+JOIN proxy_endpoints pe
+  ON pe.id = ppe.endpoint_id AND pe.enabled = 1
+WHERE pp.id = :pool_id AND pp.enabled = 1;
+""".strip()
+
+    async def _op() -> dict[str, Any]:
+        async with engine.connect() as conn:
+            row = (await conn.exec_driver_sql(sql, {"pool_id": int(pool_id), "now": str(now_iso)})).first()
+        if row is None:
+            return {"endpoints_total": 0, "endpoints_eligible": 0, "next_available_at": None}
+        total = int(row[0] or 0)
+        eligible = int(row[1] or 0)
+        next_available_at = str(row[2]).strip() if row[2] is not None else None
+        return {
+            "endpoints_total": max(0, total),
+            "endpoints_eligible": max(0, eligible),
+            "next_available_at": next_available_at or None,
+        }
 
     return await with_sqlite_busy_retry(_op)
 
@@ -325,7 +363,16 @@ async def select_proxy_uri_for_url(
 
     if pool_id is None:
         if bool(runtime.proxy_fail_closed):
-            raise ApiError(code=ErrorCode.PROXY_REQUIRED, message="Proxy required but no proxy pool configured", status_code=502)
+            raise ApiError(
+                code=ErrorCode.PROXY_REQUIRED,
+                message="需要代理，但未配置代理池",
+                status_code=502,
+                details={
+                    "reason": "no_proxy_pool_configured",
+                    "host": host,
+                    "url": url,
+                },
+            )
         return None
 
     now_iso = now_iso or iso_utc_ms()
@@ -370,7 +417,25 @@ async def select_proxy_uri_for_url(
     picked = await _pick_endpoint_in_pool(engine, pool_id=int(pool_id), now_iso=now_iso)
     if picked is None:
         if bool(runtime.proxy_fail_closed):
-            raise ApiError(code=ErrorCode.PROXY_REQUIRED, message="Proxy required but no healthy proxy available", status_code=502)
+            stats = await _pool_health_stats(engine, pool_id=int(pool_id), now_iso=str(now_iso))
+            reason = "no_healthy_proxy_available"
+            if int(stats.get("endpoints_total") or 0) <= 0:
+                reason = "pool_has_no_endpoints"
+            elif int(stats.get("endpoints_eligible") or 0) <= 0 and stats.get("next_available_at"):
+                reason = "all_endpoints_blacklisted"
+
+            raise ApiError(
+                code=ErrorCode.PROXY_REQUIRED,
+                message="需要代理，但当前没有可用代理节点",
+                status_code=502,
+                details={
+                    "reason": reason,
+                    "host": host,
+                    "url": url,
+                    "pool_id": int(pool_id),
+                    **stats,
+                },
+            )
         return None
 
     endpoint_id, scheme, host_v, port, username, password_enc = picked

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
@@ -605,6 +605,92 @@ def test_job_handler_hydrate_metadata_proxy_success_updates_endpoint_and_overrid
 
         assert refresh_proxies and refresh_proxies[0]
         assert detail_proxies and detail_proxies[0]
+
+        await engine.dispose()
+
+    asyncio.run(_run())
+
+
+def test_job_handler_hydrate_metadata_proxy_required_defers_until_next_available_at(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "handler_hydrate_metadata_proxy_required_next_available.db"
+    engine = create_engine(_sqlite_url(db_path))
+
+    field_key = Fernet.generate_key().decode("ascii")
+    encryptor = FieldEncryptor.from_key(field_key)
+
+    monkeypatch.setenv("APP_ENV", "dev")
+    monkeypatch.setenv("FIELD_ENCRYPTION_KEY", field_key)
+    monkeypatch.setenv("PIXIV_OAUTH_CLIENT_ID", "cid_test")
+    monkeypatch.setenv("PIXIV_OAUTH_CLIENT_SECRET", "csec_test")
+
+    future_dt = datetime.now(timezone.utc) + timedelta(seconds=60)
+    next_available_at = future_dt.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+    async def _run() -> None:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        Session = create_sessionmaker(engine)
+        async with Session() as session:
+            pool = ProxyPool(name="p1", enabled=1)
+            session.add(pool)
+            await session.flush()
+            pool_id = int(pool.id)
+
+            endpoint = ProxyEndpoint(
+                scheme="http",
+                host="proxy.test",
+                port=1234,
+                username="",
+                password_enc="",
+                blacklisted_until=next_available_at,
+            )
+            session.add(endpoint)
+            await session.flush()
+            session.add(ProxyPoolEndpoint(pool_id=pool_id, endpoint_id=int(endpoint.id), enabled=1, weight=1))
+
+            token_row = PixivToken(
+                label="acc1",
+                enabled=1,
+                refresh_token_enc=encryptor.encrypt_text("rt_test"),
+                refresh_token_masked="***",
+                weight=1.0,
+            )
+            session.add(token_row)
+
+            session.add(
+                JobRow(
+                    type="hydrate_metadata",
+                    status="pending",
+                    payload_json=json.dumps({"illust_id": 555}, ensure_ascii=False, separators=(",", ":")),
+                )
+            )
+            await session.commit()
+
+        await set_runtime_setting(engine, key="proxy.enabled", value=True, updated_by="test")
+        await set_runtime_setting(engine, key="proxy.fail_closed", value=True, updated_by="test")
+        await set_runtime_setting(engine, key="proxy.default_pool_id", value=pool_id, updated_by="test")
+
+        dispatcher = JobDispatcher()
+        dispatcher.register(
+            "hydrate_metadata",
+            build_hydrate_metadata_handler(engine, transport=httpx.MockTransport(lambda r: httpx.Response(500))),
+        )
+
+        claimed = await claim_next_job(engine, worker_id="w1")
+        assert claimed is not None
+
+        transition = await execute_claimed_job(engine, dispatcher, job_row=claimed, worker_id="w1")
+        assert transition is not None
+        assert transition.status.value == "failed"
+        assert transition.run_after == next_available_at
+
+        async with Session() as session:
+            job_row = await session.get(JobRow, int(claimed["id"]))
+            assert job_row is not None
+            assert job_row.run_after == next_available_at
+            assert job_row.last_error is not None
+            assert "PROXY_REQUIRED" in str(job_row.last_error)
 
         await engine.dispose()
 
