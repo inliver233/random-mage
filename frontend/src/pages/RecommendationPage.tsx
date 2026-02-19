@@ -346,9 +346,9 @@ export function RecommendationPage() {
             <Form.Item
               label="质量抽样数量（quality_samples）"
               name="random_quality_samples"
-              extra="质量优先会先抽样 N 张候选再按评分挑选，N 越大越偏向高分，但 DB 读取次数更多。建议 3~10。"
+              extra="质量优先会先抽样 N 张候选再按评分挑选，N 越大越偏向高分，但每次请求会读取并评分更多候选。建议 3~50；大图库可提高到 100~1000。"
             >
-              <InputNumber min={1} max={20} style={{ width: 240 }} />
+              <InputNumber min={1} max={1000} style={{ width: 240 }} />
             </Form.Item>
             <Form.Item label="质量选择模式（pick_mode）" name="pick_mode" extra="best 更偏向稳定返回高分；weighted 更随机但仍偏向高分。">
               <Select
@@ -447,4 +447,3 @@ export function RecommendationPage() {
     </Space>
   );
 }
-
