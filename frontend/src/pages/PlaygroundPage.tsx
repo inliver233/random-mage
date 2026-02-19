@@ -1,5 +1,5 @@
 ﻿import { useMutation } from "@tanstack/react-query";
-import { Alert, Button, Card, Col, Form, Input, InputNumber, Row, Select, Skeleton, Space, Typography } from "antd";
+import { Alert, Button, Card, Col, Form, Input, InputNumber, Row, Select, Skeleton, Space, Switch, Typography } from "antd";
 import React, { useEffect } from "react";
 import { useLocation } from "react-router-dom";
 
@@ -13,15 +13,20 @@ type PlaygroundFormValues = {
   quality_samples: number | null;
   r18: 0 | 1 | 2;
   r18_strict: "default" | "1" | "0";
-  orientation: "any" | "portrait" | "landscape" | "square";
+  adaptive: boolean;
+  layout: "any" | "portrait" | "landscape" | "square";
   min_width: number | null;
   min_height: number | null;
   min_pixels: number | null;
+  min_bookmarks: number | null;
+  min_views: number | null;
+  min_comments: number | null;
   included_tags: string;
   excluded_tags: string;
   user_id: number | null;
   illust_id: number | null;
   ai_type: "any" | "0" | "1";
+  illust_type: "any" | "illust" | "manga" | "ugoira";
   created_from: string;
   created_to: string;
 };
@@ -53,11 +58,15 @@ function buildRandomUrl(values: PlaygroundFormValues): string {
 
   sp.set("r18", String(values.r18));
   if (values.r18_strict !== "default") sp.set("r18_strict", values.r18_strict);
-  if (values.orientation !== "any") sp.set("orientation", values.orientation);
+  if (values.adaptive) sp.set("adaptive", "1");
+  if (values.layout !== "any") sp.set("layout", values.layout);
 
   if (values.min_width != null) sp.set("min_width", String(values.min_width));
   if (values.min_height != null) sp.set("min_height", String(values.min_height));
   if (values.min_pixels != null) sp.set("min_pixels", String(values.min_pixels));
+  if (values.min_bookmarks != null) sp.set("min_bookmarks", String(values.min_bookmarks));
+  if (values.min_views != null) sp.set("min_views", String(values.min_views));
+  if (values.min_comments != null) sp.set("min_comments", String(values.min_comments));
 
   if (values.included_tags.trim()) sp.set("included_tags", values.included_tags.trim());
   if (values.excluded_tags.trim()) sp.set("excluded_tags", values.excluded_tags.trim());
@@ -66,6 +75,7 @@ function buildRandomUrl(values: PlaygroundFormValues): string {
   if (values.illust_id != null) sp.set("illust_id", String(values.illust_id));
 
   if (values.ai_type !== "any") sp.set("ai_type", values.ai_type);
+  if (values.illust_type !== "any") sp.set("illust_type", values.illust_type);
   if (values.created_from.trim()) sp.set("created_from", values.created_from.trim());
   if (values.created_to.trim()) sp.set("created_to", values.created_to.trim());
 
@@ -265,15 +275,20 @@ export function PlaygroundPage() {
                 quality_samples: null,
                 r18: 0,
                 r18_strict: "default",
-                orientation: "any",
+                adaptive: false,
+                layout: "any",
                 min_width: null,
                 min_height: null,
                 min_pixels: null,
+                min_bookmarks: null,
+                min_views: null,
+                min_comments: null,
                 included_tags: "",
                 excluded_tags: "",
                 user_id: null,
                 illust_id: null,
                 ai_type: "any",
+                illust_type: "any",
                 created_from: "",
                 created_to: "",
               }}
@@ -341,7 +356,16 @@ export function PlaygroundPage() {
                 />
               </Form.Item>
 
-              <Form.Item label="画面方向" name="orientation">
+              <Form.Item
+                label="自适应（自动识别移动/桌面）"
+                name="adaptive"
+                valuePropName="checked"
+                extra="开启后：在未显式设置方向/分辨率门槛时，服务端会根据设备类型自动选择更合适的默认值。"
+              >
+                <Switch />
+              </Form.Item>
+
+              <Form.Item label="画面方向（layout）" name="layout">
                 <Select
                   options={[
                     { value: "any", label: "不限" },
@@ -359,6 +383,16 @@ export function PlaygroundPage() {
                 <InputNumber min={0} style={{ width: "100%" }} />
               </Form.Item>
               <Form.Item label="最小像素" name="min_pixels">
+                <InputNumber min={0} style={{ width: "100%" }} />
+              </Form.Item>
+
+              <Form.Item label="最小收藏数" name="min_bookmarks">
+                <InputNumber min={0} style={{ width: "100%" }} />
+              </Form.Item>
+              <Form.Item label="最小浏览数" name="min_views">
+                <InputNumber min={0} style={{ width: "100%" }} />
+              </Form.Item>
+              <Form.Item label="最小评论数" name="min_comments">
                 <InputNumber min={0} style={{ width: "100%" }} />
               </Form.Item>
 
@@ -382,6 +416,17 @@ export function PlaygroundPage() {
                     { value: "any", label: "不限" },
                     { value: "0", label: "0" },
                     { value: "1", label: "1" },
+                  ]}
+                />
+              </Form.Item>
+
+              <Form.Item label="作品类型（illust_type）" name="illust_type">
+                <Select
+                  options={[
+                    { value: "any", label: "不限" },
+                    { value: "illust", label: "插画（illust）" },
+                    { value: "manga", label: "漫画（manga）" },
+                    { value: "ugoira", label: "动图（ugoira）" },
                   ]}
                 />
               </Form.Item>
