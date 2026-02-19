@@ -75,6 +75,26 @@ describe("DashboardPage", () => {
             },
           );
         }
+        if (url.endsWith("/admin/api/stats/random")) {
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              stats: {
+                total_requests: 12,
+                total_ok: 10,
+                total_error: 2,
+                in_flight: 0,
+                window_seconds: 60,
+                last_window_requests: 3,
+                last_window_ok: 3,
+                last_window_error: 0,
+                last_window_success_rate: 1.0,
+              },
+              request_id: "req_stats",
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
         if (url.includes("/admin/api/jobs?status=failed")) {
           return new Response(JSON.stringify({ ok: true, items: [{}, {}, {}], next_cursor: "", request_id: "req_jobs" }), {
             status: 200,
@@ -120,6 +140,8 @@ describe("DashboardPage", () => {
     expect(await screen.findByText("工作线程心跳: 2026-02-13T00:00:00Z")).toBeInTheDocument();
     expect(await screen.findByText("总数: 14")).toBeInTheDocument();
     expect(await screen.findByText("总数: 2")).toBeInTheDocument();
+    expect(await screen.findByText("总请求: 12")).toBeInTheDocument();
+    expect(await screen.findByText("近 1 分钟成功率: 100.0%")).toBeInTheDocument();
     expect(await screen.findByText("代理节点: 1/1 启用")).toBeInTheDocument();
     expect(await screen.findByText(/提交:\s*abcdef1/)).toBeInTheDocument();
   });

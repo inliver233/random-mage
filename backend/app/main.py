@@ -19,6 +19,7 @@ from app.core.api_keys import ApiKeyAuthConfig, ApiKeyAuthenticator, ApiKeyRateL
 from app.core.errors import ApiError, ErrorCode, json_error_response
 from app.core.logging import configure_logging, get_logger
 from app.core.metrics import observe_random_result
+from app.core.random_request_stats import RandomRequestStats
 from app.core.request_id import build_request_id_middleware, get_or_create_request_id, set_request_id_on_state
 from app.core.security import decode_jwt, parse_bearer_token
 from app.db.engine import create_engine
@@ -74,6 +75,7 @@ def create_app() -> FastAPI:
     )
     app.state.api_key_authenticator = ApiKeyAuthenticator(engine, api_key_cfg)
     app.state.api_key_limiter = ApiKeyRateLimiter(rpm=int(api_key_cfg.rpm), burst=int(api_key_cfg.burst))
+    app.state.random_request_stats = RandomRequestStats(window_seconds=60)
 
     @app.middleware("http")
     async def _public_api_key_middleware(request: Request, call_next):  # type: ignore[no-redef]
@@ -200,6 +202,12 @@ def create_app() -> FastAPI:
             return await call_next(request)
 
         started = time.monotonic()
+        stats = getattr(request.app.state, "random_request_stats", None)
+        if stats is not None:
+            try:
+                await stats.on_begin()
+            except Exception:
+                pass
         response = None
         try:
             response = await call_next(request)
@@ -208,6 +216,11 @@ def create_app() -> FastAPI:
             duration_s = time.monotonic() - started
             status_code = int(getattr(response, "status_code", 0) or 0)
             observe_random_result(result=_random_result_from_status(status_code), duration_s=duration_s)
+            if stats is not None:
+                try:
+                    await stats.on_end(status_code=int(status_code))
+                except Exception:
+                    pass
 
     app.state.settings = settings
 

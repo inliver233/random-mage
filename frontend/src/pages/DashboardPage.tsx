@@ -44,6 +44,22 @@ type VersionResponse = {
   request_id: string;
 };
 
+type RandomStatsResponse = {
+  ok: true;
+  stats: {
+    total_requests: number;
+    total_ok: number;
+    total_error: number;
+    in_flight: number;
+    window_seconds: number;
+    last_window_requests: number;
+    last_window_ok: number;
+    last_window_error: number;
+    last_window_success_rate: number;
+  };
+  request_id: string;
+};
+
 type JobsResponse = { ok: true; items: unknown[]; next_cursor: string; request_id: string };
 type CreateHydrationRunResponse = { ok: true; hydration_run_id: string; job_id: string; request_id: string };
 
@@ -89,6 +105,12 @@ export function DashboardPage() {
     queryFn: () => apiJson<JobsResponse>("/admin/api/jobs?status=failed&limit=10"),
   });
 
+  const randomStats = useQuery({
+    queryKey: ["admin", "stats", "random"],
+    queryFn: () => apiJson<RandomStatsResponse>("/admin/api/stats/random"),
+    refetchInterval: 5000,
+  });
+
   const version = useQuery({
     queryKey: ["public", "version"],
     queryFn: () => apiJson<VersionResponse>("/version"),
@@ -115,6 +137,15 @@ export function DashboardPage() {
   const workerLastSeenAt = counts?.worker.last_seen_at ?? null;
 
   const failedJobCount = failedJobs.data?.items.length ?? 0;
+
+  const lastWindowRequests = randomStats.data?.stats.last_window_requests ?? 0;
+  const lastWindowOk = randomStats.data?.stats.last_window_ok ?? 0;
+  const lastWindowError = randomStats.data?.stats.last_window_error ?? 0;
+  const lastWindowSuccessRate = randomStats.data?.stats.last_window_success_rate ?? 0;
+  const inFlight = randomStats.data?.stats.in_flight ?? 0;
+  const totalRequests = randomStats.data?.stats.total_requests ?? 0;
+  const totalOk = randomStats.data?.stats.total_ok ?? 0;
+  const totalError = randomStats.data?.stats.total_error ?? 0;
 
   return (
     <>
@@ -259,6 +290,36 @@ export function DashboardPage() {
 
       <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
         <Col xs={24} md={12} xl={8}>
+          <Card title="随机接口（/random）统计">
+            {randomStats.isLoading ? (
+              <Skeleton active />
+            ) : randomStats.isError ? (
+              <Alert
+                type="error"
+                showIcon
+                message="加载随机统计失败"
+                description={requestIdFromError(randomStats.error) ? `请求ID: ${requestIdFromError(randomStats.error)}` : ""}
+              />
+            ) : !randomStats.data ? (
+              <Skeleton active />
+            ) : (
+              <Space direction="vertical">
+                <Typography.Text>总请求: {totalRequests}</Typography.Text>
+                <Typography.Text>
+                  总成功/失败: {totalOk}/{totalError}
+                </Typography.Text>
+                <Typography.Text>
+                  近 1 分钟请求: {lastWindowRequests}（成功/失败: {lastWindowOk}/{lastWindowError}）
+                </Typography.Text>
+                <Typography.Text>近 1 分钟成功率: {(lastWindowSuccessRate * 100).toFixed(1)}%</Typography.Text>
+                <Typography.Text>当前并发（in-flight）: {inFlight}</Typography.Text>
+                <Typography.Text type="secondary">请求ID: {randomStats.data.request_id}</Typography.Text>
+              </Space>
+            )}
+          </Card>
+        </Col>
+
+        <Col xs={24} md={12} xl={8}>
           <Card title="版本信息">
             {version.isLoading ? (
               <Skeleton active />
@@ -282,7 +343,7 @@ export function DashboardPage() {
           </Card>
         </Col>
 
-        <Col xs={24} md={12} xl={16}>
+        <Col xs={24} md={12} xl={8}>
           <Card title="失败任务（最近10条）">
             {failedJobs.isLoading ? (
               <Skeleton active />
