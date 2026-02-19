@@ -222,8 +222,11 @@ def build_hydrate_metadata_handler(
     token_cache = AccessTokenCache()
     choose_lock = asyncio.Lock()
     last_token_id: int | None = None
-    pixiv_throttle_lock = asyncio.Lock()
-    last_pixiv_request_m: float = 0.0
+    pixiv_throttle_global_lock = asyncio.Lock()
+    last_pixiv_request_m_global: float = 0.0
+    pixiv_throttle_locks_guard = asyncio.Lock()
+    pixiv_throttle_locks_by_token: dict[int, asyncio.Lock] = {}
+    last_pixiv_request_m_by_token: dict[int, float] = {}
 
     def _env_int(name: str, *, default: int, min_v: int, max_v: int) -> int:
         raw = (os.environ.get(name) or "").strip()
@@ -427,8 +430,20 @@ def build_hydrate_metadata_handler(
             return int(default)
         return max(int(min_v), min(int(value), int(max_v)))
 
-    async def _pixiv_throttle(runtime: RuntimeConfig) -> None:
-        nonlocal last_pixiv_request_m
+    async def _get_pixiv_token_lock(token_id: int) -> asyncio.Lock:
+        lock = pixiv_throttle_locks_by_token.get(int(token_id))
+        if lock is not None:
+            return lock
+        async with pixiv_throttle_locks_guard:
+            lock2 = pixiv_throttle_locks_by_token.get(int(token_id))
+            if lock2 is not None:
+                return lock2
+            created = asyncio.Lock()
+            pixiv_throttle_locks_by_token[int(token_id)] = created
+            return created
+
+    async def _pixiv_throttle(runtime: RuntimeConfig, *, token_id: int | None) -> None:
+        nonlocal last_pixiv_request_m_global
 
         default_min_ms = 800 if transport is None else 0
         default_jitter_ms = 200 if transport is None else 0
@@ -450,13 +465,26 @@ def build_hydrate_metadata_handler(
         if min_interval_ms <= 0 and jitter_ms <= 0:
             return
 
-        async with pixiv_throttle_lock:
+        interval_s = (float(min_interval_ms) + random.random() * float(max(0, jitter_ms))) / 1000.0
+
+        token_id_i = int(token_id or 0)
+        if token_id_i > 0:
+            lock = await _get_pixiv_token_lock(int(token_id_i))
+            async with lock:
+                now_m = float(time.monotonic())
+                last_m = float(last_pixiv_request_m_by_token.get(int(token_id_i), 0.0))
+                wait_s = (last_m + float(interval_s)) - now_m
+                if wait_s > 0:
+                    await asyncio.sleep(float(wait_s))
+                last_pixiv_request_m_by_token[int(token_id_i)] = float(time.monotonic())
+            return
+
+        async with pixiv_throttle_global_lock:
             now_m = float(time.monotonic())
-            interval_s = (float(min_interval_ms) + random.random() * float(max(0, jitter_ms))) / 1000.0
-            wait_s = (last_pixiv_request_m + float(interval_s)) - now_m
+            wait_s = (float(last_pixiv_request_m_global) + float(interval_s)) - now_m
             if wait_s > 0:
                 await asyncio.sleep(float(wait_s))
-            last_pixiv_request_m = float(time.monotonic())
+            last_pixiv_request_m_global = float(time.monotonic())
 
     def _as_int(value: Any, *, default: int = 0) -> int:
         try:
@@ -839,7 +867,7 @@ LIMIT 1;
 
                 start_m = float(time.monotonic())
                 try:
-                    await _pixiv_throttle(runtime)
+                    await _pixiv_throttle(runtime, token_id=int(token_id))
                     token = await refresh_access_token(
                         refresh_token=refresh_token,
                         config=oauth_config,
@@ -952,7 +980,7 @@ LIMIT 1;
 
             start_m = float(time.monotonic())
             try:
-                await _pixiv_throttle(runtime)
+                await _pixiv_throttle(runtime, token_id=int(token_id))
                 async with httpx.AsyncClient(**client_kwargs) as client:
                     resp = await client.get(
                         PIXIV_ILLUST_DETAIL_URL,

@@ -11,8 +11,8 @@ from app.easy_proxies.auto_refresh import EasyProxiesAutoRefreshConfig, EasyProx
 from app.core.config import load_settings
 from app.core.logging import configure_logging, get_logger
 from app.core.redact import redact_text
-from app.core.runtime_settings import set_runtime_setting
 from app.core.time import iso_utc_ms
+from app.core.runtime_settings import set_runtime_setting
 from app.db.engine import create_engine
 from app.jobs.claim import DEFAULT_LOCK_TTL_S, claim_next_job
 from app.jobs.dispatch import JobDispatcher
@@ -79,6 +79,115 @@ def _parse_int_env(name: str, *, default: int, min_v: int, max_v: int) -> int:
     return max(int(min_v), min(int(value), int(max_v)))
 
 
+def _parse_bool_env(name: str, *, default: bool) -> bool:
+    raw = (os.environ.get(name) or "").strip()
+    if raw == "":
+        return bool(default)
+    v = raw.lower()
+    if v in {"1", "true", "yes", "y", "on"}:
+        return True
+    if v in {"0", "false", "no", "n", "off"}:
+        return False
+    return bool(default)
+
+
+def compute_desired_worker_concurrency(
+    *,
+    auto_enabled: bool,
+    enabled_tokens: int | None,
+    max_concurrency: int,
+) -> int:
+    max_c = max(1, int(max_concurrency))
+    if not bool(auto_enabled):
+        return max_c
+    n = int(enabled_tokens or 0)
+    if n <= 0:
+        n = 1
+    return max(1, min(max_c, n))
+
+
+async def _count_enabled_tokens(engine) -> int | None:
+    try:
+        async with engine.connect() as conn:
+            value = (await conn.exec_driver_sql("SELECT COUNT(*) FROM pixiv_tokens WHERE enabled=1;")).scalar_one()
+        return int(value or 0)
+    except Exception:
+        return None
+
+
+class _JobScheduler:
+    def __init__(self, engine, dispatcher: JobDispatcher, *, worker_id: str, lock_ttl_s: int) -> None:
+        self._engine = engine
+        self._dispatcher = dispatcher
+        self._worker_id = str(worker_id)
+        self._lock_ttl_s = int(lock_ttl_s)
+        self._tasks: set[asyncio.Task] = set()
+        self._stopping = False
+
+    def _on_task_done(self, task: asyncio.Task) -> None:
+        self._tasks.discard(task)
+        try:
+            _ = task.result()
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            msg = redact_text(f"{type(exc).__name__}: {exc}")
+            log.warning("job_task_failed err=%s", msg)
+
+    async def tick(self, *, desired_concurrency: int, max_claims: int) -> int:
+        if self._stopping:
+            return 0
+
+        desired = max(1, int(desired_concurrency))
+        slots = max(0, int(desired - len(self._tasks)))
+        if slots <= 0:
+            return 0
+
+        claimed = 0
+        for _ in range(int(min(slots, max(1, int(max_claims))))):
+            try:
+                job_row = await claim_next_job(
+                    self._engine,
+                    worker_id=str(self._worker_id),
+                    lock_ttl_s=int(self._lock_ttl_s),
+                )
+            except Exception as exc:
+                msg = redact_text(f"{type(exc).__name__}: {exc}")
+                log.warning("jobs_claim_failed err=%s", msg)
+                break
+            if job_row is None:
+                break
+
+            async def _run(row: dict[str, Any]) -> None:
+                try:
+                    await execute_claimed_job(
+                        self._engine,
+                        self._dispatcher,
+                        job_row=row,
+                        worker_id=str(self._worker_id),
+                    )
+                except Exception as exc:
+                    msg = redact_text(f"{type(exc).__name__}: {exc}")
+                    log.warning("job_execute_failed err=%s", msg)
+
+            task = asyncio.create_task(_run(job_row))
+            task.add_done_callback(self._on_task_done)
+            self._tasks.add(task)
+            claimed += 1
+
+        return int(claimed)
+
+    async def shutdown(self) -> None:
+        self._stopping = True
+        if not self._tasks:
+            return
+        tasks = list(self._tasks)
+        for t in tasks:
+            t.cancel()
+        _ = await asyncio.gather(*tasks, return_exceptions=True)
+        self._tasks.clear()
+
+
 async def poll_and_execute_jobs(
     engine,
     dispatcher: JobDispatcher,
@@ -143,6 +252,7 @@ async def main_async(*, max_iterations: int | None = None, poll_interval_s: floa
     settings = load_settings()
 
     engine = create_engine(settings.database_url)
+    scheduler: _JobScheduler | None = None
     try:
         dispatcher = build_default_dispatcher(engine)
 
@@ -238,16 +348,48 @@ async def main_async(*, max_iterations: int | None = None, poll_interval_s: floa
             min_v=1,
             max_v=1000,
         )
+        max_concurrency = _parse_int_env(
+            "WORKER_MAX_CONCURRENCY",
+            default=20,
+            min_v=1,
+            max_v=200,
+        )
+        auto_concurrency = _parse_bool_env("WORKER_AUTO_CONCURRENCY", default=True)
+        auto_refresh_s = _parse_int_env(
+            "WORKER_AUTO_CONCURRENCY_REFRESH_SECONDS",
+            default=15,
+            min_v=1,
+            max_v=3600,
+        )
         try:
             heartbeat_interval_s = float((os.environ.get("WORKER_HEARTBEAT_INTERVAL_SECONDS") or "10").strip() or "10")
         except Exception:
             heartbeat_interval_s = 10.0
         heartbeat_interval_s = max(1.0, min(float(heartbeat_interval_s), 300.0))
         last_heartbeat_m = 0.0
+        last_auto_refresh_m = 0.0
+        cached_enabled_tokens: int | None = None
+        cached_desired_concurrency = 1
+
+        scheduler = _JobScheduler(engine, dispatcher, worker_id=str(worker_id), lock_ttl_s=int(jobs_lock_ttl_s))
 
         async def _on_tick() -> None:
             nonlocal last_heartbeat_m
+            nonlocal last_auto_refresh_m
+            nonlocal cached_enabled_tokens
+            nonlocal cached_desired_concurrency
             now_m = time.monotonic()
+
+            if bool(auto_concurrency) and (now_m - last_auto_refresh_m) >= float(auto_refresh_s):
+                last_auto_refresh_m = now_m
+                cached_enabled_tokens = await _count_enabled_tokens(engine)
+
+            cached_desired_concurrency = compute_desired_worker_concurrency(
+                auto_enabled=bool(auto_concurrency),
+                enabled_tokens=cached_enabled_tokens,
+                max_concurrency=int(max_concurrency),
+            )
+
             if now_m - last_heartbeat_m >= heartbeat_interval_s:
                 last_heartbeat_m = now_m
                 try:
@@ -258,17 +400,30 @@ async def main_async(*, max_iterations: int | None = None, poll_interval_s: floa
                         description="worker heartbeat",
                         updated_by=f"worker:{worker_id}",
                     )
+                    await set_runtime_setting(
+                        engine,
+                        key="worker.concurrency",
+                        value={
+                            "at": iso_utc_ms(),
+                            "worker_id": worker_id,
+                            "auto": bool(auto_concurrency),
+                            "enabled_tokens": int(cached_enabled_tokens or 0),
+                            "desired": int(cached_desired_concurrency),
+                            "max": int(max_concurrency),
+                        },
+                        description="worker concurrency",
+                        updated_by=f"worker:{worker_id}",
+                    )
                 except Exception:
                     log.warning("worker_heartbeat_update_failed")
 
             await refresher.tick(engine)
-            await poll_and_execute_jobs(
-                engine,
-                dispatcher,
-                worker_id=worker_id,
-                lock_ttl_s=int(jobs_lock_ttl_s),
-                max_jobs=int(max_jobs_per_tick),
-            )
+
+            if scheduler is not None:
+                await scheduler.tick(
+                    desired_concurrency=int(cached_desired_concurrency),
+                    max_claims=int(max_jobs_per_tick),
+                )
 
         log.info("worker_start env=%s", settings.app_env)
         await run_worker(
@@ -278,6 +433,11 @@ async def main_async(*, max_iterations: int | None = None, poll_interval_s: floa
         )
         log.info("worker_stop")
     finally:
+        if scheduler is not None:
+            try:
+                await scheduler.shutdown()
+            except Exception:
+                log.warning("worker_scheduler_shutdown_failed")
         await engine.dispose()
 
 
