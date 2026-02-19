@@ -17,7 +17,7 @@ from app.core.runtime_settings import load_runtime_config
 from app.core.time import iso_utc_ms
 from app.db.images_mark import mark_image_failure, mark_image_ok
 from app.db.tags_get import get_tag_names_for_image
-from app.db.random_pick import pick_random_image
+from app.db.random_pick import pick_random_image, pick_random_images
 from app.db.session import create_sessionmaker
 from app.jobs.enqueue import enqueue_opportunistic_hydrate_metadata
 
@@ -386,7 +386,7 @@ async def random_image(
                 quality_samples_i = int(raw)
             except Exception:
                 quality_samples_i = 5
-    if quality_samples_i < 1 or quality_samples_i > 20:
+    if quality_samples_i < 1 or quality_samples_i > 1000:
         if quality_samples_source == "query":
             raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported quality_samples", status_code=400)
         quality_samples_source = "fallback"
@@ -472,23 +472,52 @@ async def random_image(
             return float(m)
 
         exclude_set: set[int] = set(int(x) for x in exclude_image_ids or [])
-        drawn = 0
-        accepted = 0
-
         candidates: list[tuple[Any, float, float, float]] = []
-        max_draws = max(int(quality_samples_i) * 5, 20)
 
-        for _ in range(int(max_draws)):
-            image = await pick_random_image(
-                session,
-                r=rng.random(),
-                exclude_image_ids=list(exclude_set),
-                **pick_kwargs,
-            )
-            if image is None:
-                break
-            exclude_set.add(int(image.id))
-            drawn += 1
+        # 批量抽样：一次性取 N 个候选（必要时 wrap-around 再取一次），避免 N 次 DB 循环查询。
+        # 若用户把某些类别倍率设为 0（例如 manga=0），直接在 SQL 抽样阶段剔除，减少无效候选。
+        ai_allowed: set[int | None] = set()
+        if float(multipliers.get("ai", 1.0)) > 0.0:
+            ai_allowed.add(1)
+        if float(multipliers.get("non_ai", 1.0)) > 0.0:
+            ai_allowed.add(0)
+        if float(multipliers.get("unknown_ai", 1.0)) > 0.0:
+            ai_allowed.add(None)
+
+        illust_allowed: set[int | None] = set()
+        if float(multipliers.get("illust", 1.0)) > 0.0:
+            illust_allowed.add(0)
+        if float(multipliers.get("manga", 1.0)) > 0.0:
+            illust_allowed.add(1)
+        if float(multipliers.get("ugoira", 1.0)) > 0.0:
+            illust_allowed.add(2)
+        if float(multipliers.get("unknown_illust_type", 1.0)) > 0.0:
+            illust_allowed.add(None)
+
+        if not ai_allowed or not illust_allowed:
+            return None, {
+                **debug_base,
+                "attempts_used": 1,
+                "picked_by": "quality_weighted" if pick_mode_raw == "weighted" else "quality_best",
+                "candidates_drawn": 0,
+                "candidates_accepted": 0,
+                "quality_pick_mode": pick_mode_raw,
+                "quality_temperature": float(temperature),
+            }
+
+        images = await pick_random_images(
+            session,
+            r=rng.random(),
+            limit=int(quality_samples_i),
+            exclude_image_ids=list(exclude_set),
+            ai_type_allowed=ai_allowed,
+            illust_type_allowed=illust_allowed,
+            **pick_kwargs,
+        )
+
+        drawn = int(len(images))
+        accepted = 0
+        for image in images:
             score = _quality_score(image, weights=score_weights)
             multiplier = _multiplier_for_image(image)
             if multiplier <= 0.0:
@@ -497,8 +526,6 @@ async def random_image(
             logit = float(score) / float(temperature) + math.log(float(multiplier))
             candidates.append((image, float(score), float(multiplier), float(logit)))
             accepted += 1
-            if accepted >= int(quality_samples_i):
-                break
 
         if not candidates:
             return None, {

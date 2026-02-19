@@ -6,6 +6,7 @@ import math
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from app.api.public.random import _quality_score  # noqa: PLC2701
 from app.db.models.base import Base
@@ -105,18 +106,21 @@ def test_random_quality_strategy_picks_weighted_by_score(tmp_path: Path, monkeyp
 
     async def _compute_expected_quality_pick() -> int:
         rng = random.Random(seed)
-        exclude: set[int] = set()
-        candidates: list[tuple[int, float]] = []
 
         Session = create_sessionmaker(app.state.engine)
         async with Session() as session:
-            for _ in range(samples):
-                img = await pick_random_image(session, r=rng.random(), exclude_image_ids=list(exclude))
-                if img is None:
+            start = float(rng.random())
+            ordered = (await session.execute(select(Image).order_by(Image.random_key.asc()))).scalars().all()
+            assert ordered
+            ordered2 = sorted(ordered, key=lambda x: float(x.random_key))
+            start_idx = 0
+            for i, img in enumerate(ordered2):
+                if float(img.random_key) >= start:
+                    start_idx = i
                     break
-                exclude.add(int(img.id))
-                score = _quality_score(img)
-                candidates.append((int(img.id), float(score)))
+            take = min(int(samples), len(ordered2))
+            picked_imgs = [ordered2[(start_idx + i) % len(ordered2)] for i in range(take)]
+            candidates: list[tuple[int, float]] = [(int(img.id), float(_quality_score(img))) for img in picked_imgs]
 
         assert candidates
         max_logit = max(s for _id, s in candidates)
@@ -217,3 +221,75 @@ def test_random_strategy_random_key_matches_pick_random_image(tmp_path: Path, mo
         assert body["ok"] is True
         assert int(body["data"]["image"]["id"]) == expected_id
         assert body["data"]["debug"]["picked_by"] == "random_key"
+
+
+def test_random_quality_samples_allows_1000(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "random_quality_samples_1000.db"
+    db_url = "sqlite+aiosqlite:///" + db_path.as_posix()
+
+    monkeypatch.setenv("APP_ENV", "dev")
+    monkeypatch.setenv("DATABASE_URL", db_url)
+
+    app = create_app()
+
+    async def _seed() -> None:
+        async with app.state.engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        Session = create_sessionmaker(app.state.engine)
+        async with Session() as session:
+            session.add_all(
+                [
+                    Image(
+                        illust_id=100,
+                        page_index=0,
+                        ext="jpg",
+                        original_url="https://example.test/100.jpg",
+                        proxy_path="/i/100.jpg",
+                        random_key=0.20,
+                        x_restrict=0,
+                        ai_type=0,
+                        width=1200,
+                        height=800,
+                        bookmark_count=10,
+                        view_count=100,
+                        comment_count=1,
+                    ),
+                    Image(
+                        illust_id=101,
+                        page_index=0,
+                        ext="jpg",
+                        original_url="https://example.test/101.jpg",
+                        proxy_path="/i/101.jpg",
+                        random_key=0.80,
+                        x_restrict=0,
+                        ai_type=0,
+                        width=800,
+                        height=800,
+                        bookmark_count=500,
+                        view_count=20000,
+                        comment_count=50,
+                    ),
+                ]
+            )
+            await session.commit()
+
+        await app.state.engine.dispose()
+
+    asyncio.run(_seed())
+
+    with TestClient(app) as client:
+        resp = client.get(
+            "/random",
+            params={
+                "format": "json",
+                "attempts": 1,
+                "seed": "seed_quality_1000",
+                "strategy": "quality",
+                "quality_samples": 1000,
+            },
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["data"]["debug"]["quality_samples"] == 1000
