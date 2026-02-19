@@ -105,9 +105,13 @@ async def pick_random_image(
     r18_strict: bool = True,
     orientation: int | None = None,
     ai_type: int | None = None,
+    illust_type: int | None = None,
     min_width: int = 0,
     min_height: int = 0,
     min_pixels: int = 0,
+    min_bookmarks: int = 0,
+    min_views: int = 0,
+    min_comments: int = 0,
     included_tags: Sequence[str] | None = None,
     excluded_tags: Sequence[str] | None = None,
     user_id: int | None = None,
@@ -132,7 +136,12 @@ async def pick_random_image(
     min_width_i = int(min_width)
     min_height_i = int(min_height)
     min_pixels_i = int(min_pixels)
+    min_bookmarks_i = int(min_bookmarks)
+    min_views_i = int(min_views)
+    min_comments_i = int(min_comments)
     if min_width_i < 0 or min_height_i < 0 or min_pixels_i < 0:
+        raise ValueError("min_* must be >= 0")
+    if min_bookmarks_i < 0 or min_views_i < 0 or min_comments_i < 0:
         raise ValueError("min_* must be >= 0")
 
     clauses = [Image.status == 1]
@@ -145,6 +154,11 @@ async def pick_random_image(
         if ai_type_i not in {0, 1}:
             raise ValueError("ai_type must be 0, 1, or None")
         clauses.append(Image.ai_type == ai_type_i)
+    if illust_type is not None:
+        illust_type_i = int(illust_type)
+        if illust_type_i not in {0, 1, 2}:
+            raise ValueError("illust_type must be 0, 1, 2, or None")
+        clauses.append(Image.illust_type == illust_type_i)
     if included_tags_clause is not None:
         clauses.append(included_tags_clause)
     if excluded_tags_clause is not None:
@@ -157,6 +171,12 @@ async def pick_random_image(
         clauses.append(Image.height >= min_height_i)
     if min_pixels_i > 0:
         clauses.append((Image.width * Image.height) >= min_pixels_i)
+    if min_bookmarks_i > 0:
+        clauses.append(Image.bookmark_count >= min_bookmarks_i)
+    if min_views_i > 0:
+        clauses.append(Image.view_count >= min_views_i)
+    if min_comments_i > 0:
+        clauses.append(Image.comment_count >= min_comments_i)
     if user_id is not None:
         clauses.append(Image.user_id == int(user_id))
     if illust_id is not None:
@@ -215,11 +235,15 @@ async def pick_random_images(
     r18_strict: bool = True,
     orientation: int | None = None,
     ai_type: int | None = None,
+    illust_type: int | None = None,
     ai_type_allowed: set[int | None] | None = None,
     illust_type_allowed: set[int | None] | None = None,
     min_width: int = 0,
     min_height: int = 0,
     min_pixels: int = 0,
+    min_bookmarks: int = 0,
+    min_views: int = 0,
+    min_comments: int = 0,
     included_tags: Sequence[str] | None = None,
     excluded_tags: Sequence[str] | None = None,
     user_id: int | None = None,
@@ -250,7 +274,12 @@ async def pick_random_images(
     min_width_i = int(min_width)
     min_height_i = int(min_height)
     min_pixels_i = int(min_pixels)
+    min_bookmarks_i = int(min_bookmarks)
+    min_views_i = int(min_views)
+    min_comments_i = int(min_comments)
     if min_width_i < 0 or min_height_i < 0 or min_pixels_i < 0:
+        raise ValueError("min_* must be >= 0")
+    if min_bookmarks_i < 0 or min_views_i < 0 or min_comments_i < 0:
         raise ValueError("min_* must be >= 0")
 
     clauses = [Image.status == 1]
@@ -263,6 +292,11 @@ async def pick_random_images(
         if ai_type_i not in {0, 1}:
             raise ValueError("ai_type must be 0, 1, or None")
         clauses.append(Image.ai_type == ai_type_i)
+    if illust_type is not None:
+        illust_type_i = int(illust_type)
+        if illust_type_i not in {0, 1, 2}:
+            raise ValueError("illust_type must be 0, 1, 2, or None")
+        clauses.append(Image.illust_type == illust_type_i)
     if ai_type_allowed is not None:
         allowed = set(ai_type_allowed)
         if not allowed:
@@ -289,6 +323,12 @@ async def pick_random_images(
         clauses.append(Image.height >= min_height_i)
     if min_pixels_i > 0:
         clauses.append((Image.width * Image.height) >= min_pixels_i)
+    if min_bookmarks_i > 0:
+        clauses.append(Image.bookmark_count >= min_bookmarks_i)
+    if min_views_i > 0:
+        clauses.append(Image.view_count >= min_views_i)
+    if min_comments_i > 0:
+        clauses.append(Image.comment_count >= min_comments_i)
     if user_id is not None:
         clauses.append(Image.user_id == int(user_id))
     if illust_id is not None:

@@ -116,10 +116,16 @@ async def random_image(
     r18: int = 0,
     r18_strict: int | None = None,
     ai_type: str = "any",
+    illust_type: str = "any",
     orientation: str = "any",
+    layout: str | None = None,
+    adaptive: int = 0,
     min_width: int = 0,
     min_height: int = 0,
     min_pixels: int = 0,
+    min_bookmarks: int = 0,
+    min_views: int = 0,
+    min_comments: int = 0,
     included_tags: list[str] | None = Query(default=None),
     excluded_tags: list[str] | None = Query(default=None),
     user_id: int | None = None,
@@ -146,14 +152,74 @@ async def random_image(
     else:
         raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported ai_type", status_code=400)
 
+    illust_type_raw = (illust_type or "any").strip().lower()
+    illust_type_i: int | None = None
+    if illust_type_raw in {"", "any"}:
+        illust_type_i = None
+    elif illust_type_raw in {"0", "illust", "illustration"}:
+        illust_type_i = 0
+    elif illust_type_raw in {"1", "manga"}:
+        illust_type_i = 1
+    elif illust_type_raw in {"2", "ugoira"}:
+        illust_type_i = 2
+    else:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported illust_type", status_code=400)
+
     if r18 not in {0, 1, 2}:
         raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported r18", status_code=400)
-    orientation = (orientation or "").strip().lower()
+
+    if adaptive not in {0, 1}:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported adaptive", status_code=400)
+
+    layout_source = "orientation"
+    raw_layout = orientation
+    if layout is not None:
+        layout_source = "layout"
+        raw_layout = layout
+
+    layout_norm = (raw_layout or "").strip().lower()
+    alias_map = {"vertical": "portrait", "horizontal": "landscape"}
+    layout_norm = alias_map.get(layout_norm, layout_norm)
     orientation_map = {"any": None, "portrait": 1, "landscape": 2, "square": 3}
-    if orientation not in orientation_map:
-        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported orientation", status_code=400)
-    if min_width < 0 or min_height < 0 or min_pixels < 0:
+    if layout_norm not in orientation_map:
+        raise ApiError(
+            code=ErrorCode.BAD_REQUEST,
+            message="Unsupported layout" if layout_source == "layout" else "Unsupported orientation",
+            status_code=400,
+        )
+
+    min_width_i = int(min_width)
+    min_height_i = int(min_height)
+    min_pixels_i = int(min_pixels)
+    min_bookmarks_i = int(min_bookmarks)
+    min_views_i = int(min_views)
+    min_comments_i = int(min_comments)
+    if min_width_i < 0 or min_height_i < 0 or min_pixels_i < 0:
         raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported min_*", status_code=400)
+    if min_bookmarks_i < 0 or min_views_i < 0 or min_comments_i < 0:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported min_*", status_code=400)
+
+    # 自适应：在用户没有显式指定的情况下，根据设备类型设置默认的方向/分辨率门槛。
+    # 注意：不会覆盖用户显式传入的 orientation/layout/min_*。
+    if int(adaptive) == 1:
+        qp = request.query_params
+        orientation_explicit = ("layout" in qp) or ("orientation" in qp)
+        min_explicit = ("min_width" in qp) or ("min_height" in qp) or ("min_pixels" in qp)
+
+        ch_mobile = (request.headers.get("sec-ch-ua-mobile") or request.headers.get("Sec-CH-UA-Mobile") or "").strip()
+        if ch_mobile == "?1":
+            is_mobile = True
+        elif ch_mobile == "?0":
+            is_mobile = False
+        else:
+            ua = (request.headers.get("user-agent") or request.headers.get("User-Agent") or "").lower()
+            is_mobile = any(x in ua for x in ("mobi", "android", "iphone", "ipad", "ipod"))
+
+        if not orientation_explicit and layout_norm == "any":
+            layout_norm = "portrait" if is_mobile else "landscape"
+
+        if not min_explicit and min_width_i == 0 and min_height_i == 0 and min_pixels_i == 0:
+            min_pixels_i = 1_000_000 if is_mobile else 2_000_000
 
     def _parse_tags(values: list[str] | None) -> list[str]:
         out: list[str] = []
@@ -206,10 +272,16 @@ async def random_image(
         applied_filters: dict[str, Any] = {
             "r18": r18,
             "r18_strict": int(r18_strict),
-            "orientation": orientation,
-            "min_width": int(min_width),
-            "min_height": int(min_height),
-            "min_pixels": int(min_pixels),
+            "ai_type": ai_type_raw,
+            "illust_type": illust_type_raw,
+            "adaptive": int(adaptive),
+            "orientation": layout_norm,
+            "min_width": int(min_width_i),
+            "min_height": int(min_height_i),
+            "min_pixels": int(min_pixels_i),
+            "min_bookmarks": int(min_bookmarks_i),
+            "min_views": int(min_views_i),
+            "min_comments": int(min_comments_i),
         }
         if included:
             applied_filters["included_tags"] = included
@@ -227,10 +299,12 @@ async def random_image(
         suggestions: list[str] = ["运行元数据补全任务以提升元数据覆盖率"]
         if r18 == 0 and int(r18_strict) == 1:
             suggestions.append("将 r18_strict=0 以允许未知 x_restrict（冷启动阶段更容易命中）")
-        if orientation != "any":
+        if layout_norm != "any":
             suggestions.append("将 orientation=any（取消方向限制）")
-        if int(min_width) > 0 or int(min_height) > 0 or int(min_pixels) > 0:
+        if int(min_width_i) > 0 or int(min_height_i) > 0 or int(min_pixels_i) > 0:
             suggestions.append("降低 min_width/min_height/min_pixels（放宽分辨率门槛）")
+        if int(min_bookmarks_i) > 0 or int(min_views_i) > 0 or int(min_comments_i) > 0:
+            suggestions.append("降低 min_bookmarks/min_views/min_comments（放宽热度门槛）")
         if included:
             suggestions.append("放宽 included_tags（减少必须包含的标签）")
         if excluded:
@@ -239,8 +313,14 @@ async def random_image(
             suggestions.append("移除 user_id 过滤")
         if illust_id is not None:
             suggestions.append("移除 illust_id 过滤")
+        if ai_type_i is not None:
+            suggestions.append("将 ai_type=any（取消 AI 限制）")
+        if illust_type_i is not None:
+            suggestions.append("将 illust_type=any（取消作品类型限制）")
         if created_from_norm is not None or created_to_norm is not None:
             suggestions.append("扩大 created_from/created_to 时间范围")
+        if int(adaptive) == 1:
+            suggestions.append("若自适应导致过滤过严，可尝试 adaptive=0 或显式设置 min_*")
 
         return ApiError(
             code=ErrorCode.NO_MATCH,
@@ -337,10 +417,14 @@ async def random_image(
         "r18": r18,
         "r18_strict": bool(r18_strict),
         "ai_type": ai_type_i,
-        "orientation": orientation_map[orientation],
-        "min_width": min_width,
-        "min_height": min_height,
-        "min_pixels": min_pixels,
+        "illust_type": illust_type_i,
+        "orientation": orientation_map[layout_norm],
+        "min_width": int(min_width_i),
+        "min_height": int(min_height_i),
+        "min_pixels": int(min_pixels_i),
+        "min_bookmarks": int(min_bookmarks_i),
+        "min_views": int(min_views_i),
+        "min_comments": int(min_comments_i),
         "included_tags": included,
         "excluded_tags": excluded,
         "user_id": user_id,
