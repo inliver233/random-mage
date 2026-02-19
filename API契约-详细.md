@@ -71,18 +71,27 @@ Query：
 - `attempts`: `1..10`（默认 3）
 - `seed`: string（可选；可复现随机）
 - `strategy`: `quality|random`（默认 quality；quality 会“偏向高质量”）
-- `quality_samples`: `1..20`（默认 5；quality 策略下抽样候选数量）
+- `quality_samples`: `1..1000`（默认 5；quality 策略下抽样候选数量）
   - 说明：quality 策略的“评分权重/类别倍率/随机温度/选择模式”通过后台运行时设置 `random.defaults.recommendation` 配置（见 3.8 Settings）。
 
 筛选：
 - `r18`: `0|1|2`（默认 0）
 - `r18_strict`: `0|1`（默认 1；当 r18=0 且 strict=1 时，不允许 x_restrict=NULL）
-- `orientation`: `portrait|landscape|square|any`
+- `adaptive`: `0|1`（默认 0；为 1 时自动识别移动/桌面，并在未显式设置时自动选择方向/分辨率门槛）
+- `layout`: `portrait|landscape|square|any`（推荐：更直观；若与 orientation 同时传入，以 layout 为准）
+- `orientation`: `portrait|landscape|square|any`（兼容旧参数）
 - `min_width`, `min_height`, `min_pixels`: `0..2147483647`
+- `min_bookmarks`, `min_views`, `min_comments`: `0..2147483647`（热度门槛；要求对应字段存在且 >= 门槛）
 - `included_tags`, `excluded_tags`: 多值
 - `user_id`, `illust_id`: 正整数
 - `ai_type`: `0|1|any`
+- `illust_type`: `illust|manga|ugoira|any`（也支持 `0|1|2|any`；插画/漫画/动图）
 - `created_from`, `created_to`: ISO 日期/时间（UTC）
+
+自适应（`adaptive=1`）优先级规则：
+- 如果用户**没有显式传入** `layout/orientation`：服务端会根据设备类型设置默认方向（移动端偏向 `portrait`，桌面端偏向 `landscape`）。
+- 如果用户**没有显式传入** `min_width/min_height/min_pixels`：服务端会设置默认 `min_pixels`（移动端 `1_000_000`，桌面端 `2_000_000`）。
+- 一旦用户显式传入上述参数，自适应不会覆盖（只在“缺省值”场景生效）。
 
 响应模式：
 
@@ -199,7 +208,7 @@ Query：
 Query：
 - `limit`: `1..200`（默认 50）
 - `cursor`: string（可选）
-- 支持 `/random` 同款筛选参数（r18/orientation/min_*/tags/user_id/illust_id/ai_type/time）
+- 支持 `/random` 的主要筛选参数（r18/r18_strict/orientation/min_*/tags/user_id/illust_id/ai_type/time）
 
 返回：
 ```json
@@ -441,6 +450,33 @@ Body：`{ "override_proxy_id": 10, "ttl_ms": 1200000, "reason": "manual_override
 - AI 图降低概率：`multipliers.ai = 0.5`
 - 不返回漫画：`multipliers.manga = 0`
 - 只返回插画：`multipliers.manga = 0` 且 `multipliers.ugoira = 0`（并可将 `unknown_illust_type=0`）
+
+### 3.9 统计 / 观测
+
+#### `GET /admin/api/summary`
+用途：管理端首页总览（图片/令牌/代理/队列/worker 心跳等计数）。
+
+#### `GET /admin/api/stats/random`
+用途：查看 `/random` 的请求统计（仅统计 `/random`，无论返回图片流还是 JSON 都计为一次请求）。
+
+返回示例：
+```json
+{
+  "ok": true,
+  "stats": {
+    "total_requests": 12345,
+    "total_ok": 12000,
+    "total_error": 345,
+    "in_flight": 0,
+    "window_seconds": 60,
+    "last_window_requests": 120,
+    "last_window_ok": 118,
+    "last_window_error": 2,
+    "last_window_success_rate": 0.9833
+  },
+  "request_id": "req_..."
+}
+```
 
 ---
 
