@@ -10,7 +10,8 @@ from app.core.errors import ApiError, ErrorCode
 from app.core.request_id import get_or_create_request_id
 from app.db.models.image_tags import ImageTag
 from app.db.models.images import Image
-from app.db.session import create_sessionmaker
+from app.db.models.tags import Tag
+from app.db.session import create_sessionmaker, with_sqlite_busy_retry
 
 router = APIRouter()
 
@@ -163,3 +164,180 @@ async def list_admin_images(
         "next_cursor": str(next_cursor) if next_cursor is not None else "",
         "request_id": rid,
     }
+
+
+async def _load_bulk_delete_json(request: Request) -> dict[str, Any]:
+    try:
+        data = await request.json()
+    except Exception as exc:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid JSON body", status_code=400) from exc
+    if not isinstance(data, dict):
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid JSON body", status_code=400)
+
+    raw_ids = data.get("image_ids", None)
+    if raw_ids is None:
+        raw_ids = data.get("ids", None)
+    if raw_ids is None:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Missing image_ids", status_code=400)
+    if not isinstance(raw_ids, list):
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported image_ids", status_code=400)
+
+    ids: list[int] = []
+    seen: set[int] = set()
+    for raw in raw_ids:
+        try:
+            i = int(raw)
+        except Exception as exc:
+            raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported image_ids", status_code=400) from exc
+        if i <= 0 or i in seen:
+            continue
+        seen.add(i)
+        ids.append(i)
+
+    if not ids:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Empty image_ids", status_code=400)
+    if len(ids) > 20_000:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Too many image_ids", status_code=400)
+
+    return {"image_ids": ids}
+
+
+def _chunks(values: list[int], *, chunk_size: int) -> list[list[int]]:
+    if chunk_size <= 0:
+        return [values]
+    out: list[list[int]] = []
+    for i in range(0, len(values), chunk_size):
+        out.append(values[i : i + chunk_size])
+    return out
+
+
+def _safe_rowcount(result: Any) -> int:
+    try:
+        rc = int(getattr(result, "rowcount", 0) or 0)
+    except Exception:
+        return 0
+    return rc if rc > 0 else 0
+
+
+@router.delete("/images/{image_id}")
+async def delete_admin_image(
+    image_id: int,
+    request: Request,
+    _claims: dict[str, Any] = Depends(get_admin_claims),
+) -> dict[str, Any]:
+    _ = _claims
+    if int(image_id) <= 0:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid image id", status_code=400)
+
+    rid = get_or_create_request_id(request)
+    engine = request.app.state.engine
+    Session = create_sessionmaker(engine)
+
+    async def _op() -> dict[str, Any]:
+        async with Session() as session:
+            row = await session.get(Image, int(image_id))
+            if row is None:
+                raise ApiError(code=ErrorCode.NOT_FOUND, message="Image not found", status_code=404)
+            await session.execute(sa.delete(ImageTag).where(ImageTag.image_id == int(image_id)))
+            await session.delete(row)
+            await session.commit()
+
+        return {"ok": True, "image_id": str(int(image_id)), "request_id": rid}
+
+    return await with_sqlite_busy_retry(_op)
+
+
+@router.post("/images/bulk-delete")
+async def bulk_delete_admin_images(
+    request: Request,
+    _claims: dict[str, Any] = Depends(get_admin_claims),
+) -> dict[str, Any]:
+    _ = _claims
+    rid = get_or_create_request_id(request)
+    body = await _load_bulk_delete_json(request)
+    ids = list(body["image_ids"])
+
+    engine = request.app.state.engine
+    Session = create_sessionmaker(engine)
+
+    async def _op() -> dict[str, Any]:
+        deleted = 0
+        found = 0
+        async with Session() as session:
+            for chunk in _chunks(ids, chunk_size=900):
+                rows = (await session.execute(sa.select(Image.id).where(Image.id.in_(chunk)))).scalars().all()
+                found += len(rows)
+
+            for chunk in _chunks(ids, chunk_size=900):
+                await session.execute(sa.delete(ImageTag).where(ImageTag.image_id.in_(chunk)))
+                result = await session.execute(sa.delete(Image).where(Image.id.in_(chunk)))
+                deleted += _safe_rowcount(result)
+
+            await session.commit()
+
+        missing = max(0, int(len(ids)) - int(found))
+        return {
+            "ok": True,
+            "requested": int(len(ids)),
+            "deleted": int(deleted),
+            "missing": int(missing),
+            "request_id": rid,
+        }
+
+    return await with_sqlite_busy_retry(_op)
+
+
+async def _load_clear_images_json(request: Request) -> dict[str, Any]:
+    try:
+        data = await request.json()
+    except Exception as exc:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid JSON body", status_code=400) from exc
+    if not isinstance(data, dict):
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Invalid JSON body", status_code=400)
+
+    confirm = data.get("confirm", False)
+    if confirm not in {True, 1, "1", "true", "yes", "y", "on"}:
+        raise ApiError(code=ErrorCode.BAD_REQUEST, message="Missing confirm", status_code=400)
+
+    delete_tags = data.get("delete_tags", True)
+    delete_tags_bool = (
+        bool(delete_tags)
+        if isinstance(delete_tags, (bool, int))
+        else str(delete_tags).strip().lower() in {"1", "true", "yes", "y", "on"}
+    )
+
+    return {"delete_tags": bool(delete_tags_bool)}
+
+
+@router.post("/images/clear")
+async def clear_admin_images(
+    request: Request,
+    _claims: dict[str, Any] = Depends(get_admin_claims),
+) -> dict[str, Any]:
+    _ = _claims
+    rid = get_or_create_request_id(request)
+    body = await _load_clear_images_json(request)
+    delete_tags = bool(body["delete_tags"])
+
+    engine = request.app.state.engine
+    Session = create_sessionmaker(engine)
+
+    async def _op() -> dict[str, Any]:
+        async with Session() as session:
+            result_links = await session.execute(sa.delete(ImageTag))
+            result_images = await session.execute(sa.delete(Image))
+            result_tags = None
+            if delete_tags:
+                result_tags = await session.execute(sa.delete(Tag))
+
+            await session.commit()
+
+        return {
+            "ok": True,
+            "deleted_image_tags": _safe_rowcount(result_links),
+            "deleted_images": _safe_rowcount(result_images),
+            "deleted_tags": _safe_rowcount(result_tags) if result_tags is not None else 0,
+            "request_id": rid,
+        }
+
+    return await with_sqlite_busy_retry(_op)

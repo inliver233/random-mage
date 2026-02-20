@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, Card, Select, Skeleton, Space, Table, Tag, Typography } from "antd";
+import { Alert, Button, Card, Popconfirm, Select, Skeleton, Space, Table, Tag, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import React from "react";
 import { useMemo, useState } from "react";
@@ -45,9 +45,37 @@ type ManualHydrateResponse = {
   request_id: string;
 };
 
+type DeleteImageResponse = {
+  ok: true;
+  image_id: string;
+  request_id: string;
+};
+
+type BulkDeleteImagesResponse = {
+  ok: true;
+  requested: number;
+  deleted: number;
+  missing: number;
+  request_id: string;
+};
+
+type ClearImagesResponse = {
+  ok: true;
+  deleted_image_tags: number;
+  deleted_images: number;
+  deleted_tags: number;
+  request_id: string;
+};
+
 function requestIdFromError(err: unknown): string | null {
   if (!(err instanceof ApiError)) return null;
   return err.body?.request_id ? String(err.body.request_id) : null;
+}
+
+function messageFromError(err: unknown): string {
+  if (err instanceof ApiError) return err.message;
+  if (err instanceof Error) return err.message;
+  return "未知错误";
 }
 
 const MISSING_LABELS: Record<string, string> = {
@@ -65,6 +93,7 @@ const MISSING_LABELS: Record<string, string> = {
 export function ImagesPage() {
   const qc = useQueryClient();
   const [missing, setMissing] = useState<string[]>([]);
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [actionAlert, setActionAlert] = useState<{ type: "success" | "error"; message: string; requestId: string | null } | null>(null);
 
   const query = useQuery({
@@ -73,6 +102,68 @@ export function ImagesPage() {
       const sp = new URLSearchParams({ limit: "50" });
       for (const key of missing) sp.append("missing", key);
       return apiJson<ImagesListResponse>(`/admin/api/images?${sp.toString()}`);
+    },
+  });
+
+  const deleteImage = useMutation({
+    mutationFn: (imageId: string) =>
+      apiJson<DeleteImageResponse>(`/admin/api/images/${encodeURIComponent(imageId)}`, { method: "DELETE" }),
+    onMutate: () => setActionAlert(null),
+    onSuccess: (data) => {
+      setActionAlert({ type: "success", message: `图片已删除：#${data.image_id}`, requestId: data.request_id });
+      setSelectedRowKeys((prev) => prev.filter((k) => String(k) !== String(data.image_id)));
+      qc.invalidateQueries({ queryKey: ["admin", "images"] });
+      qc.invalidateQueries({ queryKey: ["admin", "summary"] });
+      qc.invalidateQueries({ queryKey: ["public", "tags"] });
+    },
+    onError: (err) => {
+      setActionAlert({ type: "error", message: messageFromError(err), requestId: requestIdFromError(err) });
+    },
+  });
+
+  const bulkDelete = useMutation({
+    mutationFn: (imageIds: string[]) =>
+      apiJson<BulkDeleteImagesResponse>("/admin/api/images/bulk-delete", {
+        method: "POST",
+        body: JSON.stringify({ image_ids: imageIds.map((v) => Number(v)) }),
+      }),
+    onMutate: () => setActionAlert(null),
+    onSuccess: (data) => {
+      setActionAlert({
+        type: "success",
+        message: `批量删除完成：请求 ${data.requested}，成功删除 ${data.deleted}，未找到 ${data.missing}`,
+        requestId: data.request_id,
+      });
+      setSelectedRowKeys([]);
+      qc.invalidateQueries({ queryKey: ["admin", "images"] });
+      qc.invalidateQueries({ queryKey: ["admin", "summary"] });
+      qc.invalidateQueries({ queryKey: ["public", "tags"] });
+    },
+    onError: (err) => {
+      setActionAlert({ type: "error", message: messageFromError(err), requestId: requestIdFromError(err) });
+    },
+  });
+
+  const clearImages = useMutation({
+    mutationFn: () =>
+      apiJson<ClearImagesResponse>("/admin/api/images/clear", {
+        method: "POST",
+        body: JSON.stringify({ confirm: true, delete_tags: true }),
+      }),
+    onMutate: () => setActionAlert(null),
+    onSuccess: (data) => {
+      setActionAlert({
+        type: "success",
+        message: `图片数据已清空：图片 ${data.deleted_images}，关联 ${data.deleted_image_tags}，标签 ${data.deleted_tags}`,
+        requestId: data.request_id,
+      });
+      setSelectedRowKeys([]);
+      qc.invalidateQueries({ queryKey: ["admin", "images"] });
+      qc.invalidateQueries({ queryKey: ["admin", "summary"] });
+      qc.invalidateQueries({ queryKey: ["public", "tags"] });
+    },
+    onError: (err) => {
+      setActionAlert({ type: "error", message: messageFromError(err), requestId: requestIdFromError(err) });
     },
   });
 
@@ -168,12 +259,25 @@ export function ImagesPage() {
             >
               手动补全
             </Button>
+            <Popconfirm
+              title={`确定删除图片 #${row.id}？`}
+              okText="删除"
+              cancelText="取消"
+              okButtonProps={{ danger: true }}
+              onConfirm={() => deleteImage.mutate(row.id)}
+            >
+              <Button size="small" danger loading={deleteImage.isPending && deleteImage.variables === row.id}>
+                删除
+              </Button>
+            </Popconfirm>
           </Space>
         ),
       },
     ],
-    [manualHydrate],
+    [deleteImage, manualHydrate],
   );
+
+  const selectedImageIds = useMemo(() => selectedRowKeys.map((k) => String(k)), [selectedRowKeys]);
 
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
@@ -187,7 +291,10 @@ export function ImagesPage() {
           mode="multiple"
           allowClear
           value={missing}
-          onChange={(values) => setMissing(values)}
+          onChange={(values) => {
+            setMissing(values);
+            setSelectedRowKeys([]);
+          }}
           placeholder="不过滤（显示全部）"
           options={[
             { value: "tags", label: "缺标签" },
@@ -205,6 +312,29 @@ export function ImagesPage() {
         <Button onClick={() => query.refetch()} loading={query.isFetching}>
           刷新列表
         </Button>
+        <Popconfirm
+          title={`确定删除所选图片（${selectedImageIds.length} 张）？`}
+          okText="删除"
+          cancelText="取消"
+          okButtonProps={{ danger: true }}
+          onConfirm={() => bulkDelete.mutate(selectedImageIds)}
+          disabled={selectedImageIds.length === 0}
+        >
+          <Button danger disabled={selectedImageIds.length === 0} loading={bulkDelete.isPending}>
+            删除所选（{selectedImageIds.length}）
+          </Button>
+        </Popconfirm>
+        <Popconfirm
+          title="确定清空所有图片数据（包含标签与关联）？此操作不可恢复。"
+          okText="清空"
+          cancelText="取消"
+          okButtonProps={{ danger: true }}
+          onConfirm={() => clearImages.mutate()}
+        >
+          <Button danger loading={clearImages.isPending}>
+            清空图片库
+          </Button>
+        </Popconfirm>
       </Space>
 
       {actionAlert ? (
@@ -231,6 +361,10 @@ export function ImagesPage() {
             rowKey={(row) => row.id}
             columns={columns}
             dataSource={query.data.items}
+            rowSelection={{
+              selectedRowKeys,
+              onChange: (keys) => setSelectedRowKeys(keys),
+            }}
             pagination={false}
             size="small"
             scroll={{ x: 2000 }}

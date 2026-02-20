@@ -40,7 +40,7 @@ function AriaI18nPatches() {
 
     const applyOnce = () => {
       for (const [from, to] of Object.entries(translations)) {
-        document.querySelectorAll(`[aria-label=\"${from}\"]`).forEach((node) => {
+        document.querySelectorAll(`[aria-label="${from}"]`).forEach((node) => {
           node.setAttribute("aria-label", to);
         });
       }
