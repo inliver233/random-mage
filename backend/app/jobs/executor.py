@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import random
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from app.core.time import iso_utc_ms
 from app.core.metrics import JOBS_FAILED_TOTAL
-from app.db.session import with_sqlite_busy_retry
+from app.db.session import is_sqlite_busy_error, with_sqlite_busy_retry
 from app.jobs.dispatch import JobDispatcher
 from app.jobs.errors import JobDeferError, JobPermanentError
 from app.jobs.model import Job, JobStatus, JobTransition, on_job_defer, on_job_failure, on_job_success
@@ -130,7 +132,12 @@ async def execute_claimed_job(
         else:
             transition = on_job_failure(job, error=f"{type(exc).__name__}: {exc}", now=now_dt)
     except Exception as exc:
-        transition = on_job_failure(job, error=f"{type(exc).__name__}: {exc}", now=now_dt)
+        if is_sqlite_busy_error(exc):
+            delay_s = 2.0 + random.random() * 3.0
+            run_after = iso_utc_ms(now_dt + timedelta(seconds=delay_s))
+            transition = on_job_defer(job, run_after=run_after, error=f"{type(exc).__name__}: {exc}", now=now_dt)
+        else:
+            transition = on_job_failure(job, error=f"{type(exc).__name__}: {exc}", now=now_dt)
     else:
         transition = on_job_success(job, now=now_dt)
 

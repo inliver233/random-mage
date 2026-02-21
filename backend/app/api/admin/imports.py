@@ -236,53 +236,61 @@ async def create_import(
     payload_dir = db_dir / "imports_payloads"
     payload_dir.mkdir(parents=True, exist_ok=True)
 
-    async with Session() as session:
-        imp = Import(created_by=str(_claims.get("sub") or ""), source=body.source)
-        session.add(imp)
-        await session.flush()
+    payload_path = payload_dir / f"import_payload_{uuid4().hex}.txt"
+    try:
+        payload_path.write_text(body.text, encoding="utf-8")
+    except OSError as exc:
+        raise ApiError(code=ErrorCode.INTERNAL_ERROR, message="写入导入内容失败", status_code=500) from exc
 
-        imp.total = int(total)
-        imp.accepted = int(accepted)
-        imp.success = 0
-        imp.failed = int(error_total)
-        imp.detail_json = json.dumps(
-            {
-                "deduped": int(deduped),
-                "errors": [asdict(e) for e in errors[:200]],
-            },
-            ensure_ascii=False,
-        )
+    file_ref = make_file_ref(payload_path, base_dir=db_dir)
 
-        payload_path = payload_dir / f"import_{int(imp.id)}_{uuid4().hex}.txt"
-        try:
-            payload_path.write_text(body.text, encoding="utf-8")
-        except OSError as exc:
-            raise ApiError(code=ErrorCode.INTERNAL_ERROR, message="写入导入内容失败", status_code=500) from exc
+    async def _op() -> tuple[int, int]:
+        async with Session() as session:
+            imp = Import(created_by=str(_claims.get("sub") or ""), source=body.source)
+            session.add(imp)
+            await session.flush()
 
-        file_ref = make_file_ref(payload_path, base_dir=db_dir)
-
-        job = JobRow(
-            type="import_images",
-            status="pending",
-            payload_json=json.dumps(
+            imp.total = int(total)
+            imp.accepted = int(accepted)
+            imp.success = 0
+            imp.failed = int(error_total)
+            imp.detail_json = json.dumps(
                 {
-                    "import_id": int(imp.id),
-                    "file_ref": file_ref,
-                    "hydrate_on_import": bool(body.hydrate_on_import),
+                    "deduped": int(deduped),
+                    "errors": [asdict(e) for e in errors[:200]],
                 },
                 ensure_ascii=False,
-                separators=(",", ":"),
-            ),
-            ref_type="import",
-            ref_id=str(imp.id),
-        )
-        session.add(job)
-        await session.flush()
+            )
 
-        await session.commit()
+            job = JobRow(
+                type="import_images",
+                status="pending",
+                payload_json=json.dumps(
+                    {
+                        "import_id": int(imp.id),
+                        "file_ref": file_ref,
+                        "hydrate_on_import": bool(body.hydrate_on_import),
+                    },
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ),
+                ref_type="import",
+                ref_id=str(imp.id),
+            )
+            session.add(job)
+            await session.flush()
 
-        import_id = imp.id
-        job_id = job.id
+            await session.commit()
+            return int(imp.id), int(job.id)
+
+    try:
+        import_id, job_id = await with_sqlite_busy_retry(_op)
+    except Exception:
+        try:
+            payload_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise
 
     inline_max = _import_inline_max_accepted()
     executed_inline = False
@@ -329,18 +337,22 @@ async def rollback_import(
     engine = request.app.state.engine
     Session = create_sessionmaker(engine)
 
-    async with Session() as session:
-        imp = await session.get(Import, import_id)
-        if imp is None:
-            raise ApiError(code=ErrorCode.NOT_FOUND, message="Import not found", status_code=404)
+    async def _op() -> int:
+        async with Session() as session:
+            imp = await session.get(Import, import_id)
+            if imp is None:
+                raise ApiError(code=ErrorCode.NOT_FOUND, message="Import not found", status_code=404)
 
-        result = await session.execute(
-            sa.update(Image)
-            .where(Image.created_import_id == import_id)
-            .values(status=target_status, updated_at=now_expr)
-        )
-        updated = int(result.rowcount or 0)
-        await session.commit()
+            result = await session.execute(
+                sa.update(Image)
+                .where(Image.created_import_id == import_id)
+                .values(status=target_status, updated_at=now_expr)
+            )
+            updated = int(result.rowcount or 0)
+            await session.commit()
+            return int(updated)
+
+    updated = await with_sqlite_busy_retry(_op)
 
     return {
         "ok": True,
