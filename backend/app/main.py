@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request
 from app.api.admin.router import router as admin_router
 from app.api.metrics import router as metrics_router
 from app.api.public.healthz import router as healthz_router
+from app.api.public.docs_page import router as docs_page_router
 from app.api.public.authors import router as authors_router
 from app.api.public.images import router as images_router
 from app.api.public.legacy import router as legacy_router
@@ -34,7 +35,9 @@ def create_app() -> FastAPI:
     configure_logging()
     settings = load_settings()
 
-    app = FastAPI(title="new-pixiv-api")
+    # NOTE: We reserve `/docs` for a public human-readable documentation page.
+    # Keep Swagger/Redoc available under `/api/*` paths for troubleshooting.
+    app = FastAPI(title="new-pixiv-api", docs_url="/api/docs", redoc_url="/api/redoc")
 
     @app.exception_handler(ApiError)
     async def _api_error_handler(request: Request, exc: ApiError):  # type: ignore[no-redef]
@@ -85,7 +88,7 @@ def create_app() -> FastAPI:
         path = request.url.path
         if path.startswith("/admin") or path.startswith("/metrics"):
             return await call_next(request)
-        if path in {"/healthz", "/version", "/openapi.json", "/docs", "/redoc"}:
+        if path in {"/healthz", "/version", "/openapi.json", "/docs", "/api/docs", "/api/redoc"}:
             return await call_next(request)
 
         rid = get_or_create_request_id(request)
@@ -231,6 +234,7 @@ def create_app() -> FastAPI:
             await engine.dispose()
 
     app.include_router(healthz_router)
+    app.include_router(docs_page_router)
     app.include_router(authors_router)
     app.include_router(images_router)
     app.include_router(legacy_router)

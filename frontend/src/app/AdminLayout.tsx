@@ -5,10 +5,11 @@ import { Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import { apiJson } from "../api/client";
 
-type NavItem = { key: string; label: string };
+type NavItem = { key: string; label: string; external?: boolean; href?: string };
 
 const NAV_ITEMS: NavItem[] = [
   { key: "/admin", label: "主页" },
+  { key: "docs", label: "使用文档", external: true, href: "/docs" },
   { key: "/admin/import", label: "导入链接" },
   { key: "/admin/images", label: "图片管理" },
   { key: "/admin/hydration", label: "补全管理" },
@@ -76,7 +77,15 @@ export function AdminLayout() {
           mode="inline"
           selectedKeys={[selectedKey]}
           items={NAV_ITEMS.map((it) => ({ key: it.key, label: it.label }))}
-          onClick={(e) => navigate(String(e.key))}
+          onClick={(e) => {
+            const key = String(e.key || "");
+            const item = NAV_ITEMS.find((x) => x.key === key);
+            if (item?.external && item.href) {
+              window.location.assign(String(item.href));
+              return;
+            }
+            navigate(key);
+          }}
         />
       </Layout.Sider>
 
