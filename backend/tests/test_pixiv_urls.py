@@ -21,6 +21,22 @@ def test_parse_pixiv_original_url_ok_master1200_suffix() -> None:
     assert parsed.ext == "png"
 
 
+def test_parse_pixiv_original_url_ok_square1200_suffix() -> None:
+    u = "https://i.pximg.net/img-master/img/2023/01/01/00/00/00/12345678_p2_square1200.jpg"
+    parsed = parse_pixiv_original_url(u)
+    assert parsed.illust_id == 12345678
+    assert parsed.page_index == 2
+    assert parsed.ext == "jpg"
+
+
+def test_parse_pixiv_original_url_ok_mirror_host_pixiv_re() -> None:
+    u = "https://i.pixiv.re/img-original/img/2023/01/01/00/00/00/12345678_p0.jpg"
+    parsed = parse_pixiv_original_url(u)
+    assert parsed.illust_id == 12345678
+    assert parsed.page_index == 0
+    assert parsed.ext == "jpg"
+
+
 def test_parse_pixiv_original_url_ok_ugoira0() -> None:
     u = "https://i.pximg.net/img-original/img/2014/07/01/21/17/59/44439242_ugoira0.jpg"
     parsed = parse_pixiv_original_url(u)
