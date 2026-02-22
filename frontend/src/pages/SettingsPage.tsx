@@ -36,6 +36,7 @@ type SettingsFormValues = {
   proxy_allowlist_domains: string[];
   proxy_default_pool_id: number;
   image_proxy_use_pixiv_cat: boolean;
+  image_proxy_pximg_mirror_host: "i.pixiv.cat" | "i.pixiv.re" | "i.pixiv.nl";
   random_default_attempts: number;
   random_default_r18_strict: boolean;
   random_fail_cooldown_ms: number;
@@ -100,6 +101,14 @@ function asStrList(value: unknown): string[] {
   return out;
 }
 
+function asPximgMirrorHost(value: unknown, fallback: SettingsFormValues["image_proxy_pximg_mirror_host"]): SettingsFormValues["image_proxy_pximg_mirror_host"] {
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "i.pixiv.cat" || normalized === "i.pixiv.re" || normalized === "i.pixiv.nl") return normalized;
+  }
+  return fallback;
+}
+
 export function SettingsPage() {
   const queryClient = useQueryClient();
   const [form] = Form.useForm<SettingsFormValues>();
@@ -137,6 +146,7 @@ export function SettingsPage() {
       proxy_allowlist_domains: asStrList(proxy.allowlist_domains),
       proxy_default_pool_id: asInt(proxy.default_pool_id, 0),
       image_proxy_use_pixiv_cat: asBool(imageProxy.use_pixiv_cat, false),
+      image_proxy_pximg_mirror_host: asPximgMirrorHost(imageProxy.pximg_mirror_host, "i.pixiv.cat"),
       random_default_attempts: asInt(random.default_attempts, 3),
       random_default_r18_strict: asBool(random.default_r18_strict, true),
       random_fail_cooldown_ms: asInt(random.fail_cooldown_ms, 600_000),
@@ -163,6 +173,7 @@ export function SettingsPage() {
             },
             image_proxy: {
               use_pixiv_cat: values.image_proxy_use_pixiv_cat,
+              pximg_mirror_host: values.image_proxy_pximg_mirror_host,
             },
             random: {
               default_attempts: values.random_default_attempts,
@@ -280,12 +291,26 @@ export function SettingsPage() {
               图片加速
             </Typography.Title>
             <Form.Item
-              label="使用 Pixiv.cat 反向代理（仅图片上游）"
+              label="使用第三方反向代理（仅图片上游）"
               name="image_proxy_use_pixiv_cat"
               valuePropName="checked"
-              extra="开启后：服务端拉取图片时会把 i.pximg.net 替换为 i.pixiv.cat（客户端仍访问本站域名，不会暴露第三方域名）。"
+              extra="开启后：服务端拉取图片时会把 i.pximg.net 替换为 i.pixiv.*（客户端仍访问本站域名，不会暴露第三方域名）。"
             >
               <Switch />
+            </Form.Item>
+            <Form.Item
+              label="镜像域名"
+              name="image_proxy_pximg_mirror_host"
+              extra="可选 i.pixiv.cat / i.pixiv.re / i.pixiv.nl（建议就近选择更快更稳的）。"
+            >
+              <Select
+                style={{ maxWidth: 360 }}
+                options={[
+                  { value: "i.pixiv.cat", label: "i.pixiv.cat（默认）" },
+                  { value: "i.pixiv.re", label: "i.pixiv.re（大陆备用）" },
+                  { value: "i.pixiv.nl", label: "i.pixiv.nl（大陆备用）" },
+                ]}
+              />
             </Form.Item>
 
             <Typography.Title level={5} style={{ marginTop: 12 }}>

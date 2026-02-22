@@ -5,7 +5,7 @@ from fastapi import APIRouter, Request
 from app.core.errors import ApiError, ErrorCode
 from app.core.http_stream import stream_url
 from app.core.pixiv_urls import ALLOWED_IMAGE_EXTS
-from app.core.pximg_reverse_proxy import rewrite_pximg_to_pixiv_cat
+from app.core.pximg_reverse_proxy import normalize_pximg_mirror_host, rewrite_pximg_to_mirror
 from app.core.proxy_routing import select_proxy_uri_for_url
 from app.core.runtime_settings import load_runtime_config
 from app.db.images_get_by_illust import get_image_by_illust_page
@@ -21,6 +21,7 @@ async def legacy_multi(
     page: int,
     ext: str,
     pixiv_cat: int = 0,
+    pximg_mirror_host: str | None = None,
 ):
     if int(illust_id) <= 0:
         raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported illust_id", status_code=400)
@@ -33,6 +34,14 @@ async def legacy_multi(
     if pixiv_cat not in {0, 1}:
         raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported pixiv_cat", status_code=400)
 
+    mirror_host_override: str | None = None
+    if pximg_mirror_host is not None:
+        raw = str(pximg_mirror_host or "").strip()
+        if raw:
+            mirror_host_override = normalize_pximg_mirror_host(raw)
+            if mirror_host_override is None:
+                raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported pximg_mirror_host", status_code=400)
+
     engine = request.app.state.engine
     Session = create_sessionmaker(engine)
 
@@ -43,8 +52,9 @@ async def legacy_multi(
 
     runtime = await load_runtime_config(engine)
     use_pixiv_cat = bool(runtime.image_proxy_use_pixiv_cat) or int(pixiv_cat) == 1
+    mirror_host = mirror_host_override or str(getattr(runtime, "image_proxy_pximg_mirror_host", "") or "").strip() or "i.pixiv.cat"
     proxy_uri = None
-    source_url = rewrite_pximg_to_pixiv_cat(str(image.original_url)) if use_pixiv_cat else str(image.original_url)
+    source_url = rewrite_pximg_to_mirror(str(image.original_url), mirror_host=mirror_host) if use_pixiv_cat else str(image.original_url)
     if not use_pixiv_cat:
         picked = await select_proxy_uri_for_url(
             engine,
@@ -71,6 +81,7 @@ async def legacy_single(
     illust_id: int,
     ext: str,
     pixiv_cat: int = 0,
+    pximg_mirror_host: str | None = None,
 ):
     if int(illust_id) <= 0:
         raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported illust_id", status_code=400)
@@ -80,6 +91,14 @@ async def legacy_single(
         raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported ext", status_code=400)
     if pixiv_cat not in {0, 1}:
         raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported pixiv_cat", status_code=400)
+
+    mirror_host_override: str | None = None
+    if pximg_mirror_host is not None:
+        raw = str(pximg_mirror_host or "").strip()
+        if raw:
+            mirror_host_override = normalize_pximg_mirror_host(raw)
+            if mirror_host_override is None:
+                raise ApiError(code=ErrorCode.BAD_REQUEST, message="Unsupported pximg_mirror_host", status_code=400)
 
     engine = request.app.state.engine
     Session = create_sessionmaker(engine)
@@ -91,8 +110,9 @@ async def legacy_single(
 
     runtime = await load_runtime_config(engine)
     use_pixiv_cat = bool(runtime.image_proxy_use_pixiv_cat) or int(pixiv_cat) == 1
+    mirror_host = mirror_host_override or str(getattr(runtime, "image_proxy_pximg_mirror_host", "") or "").strip() or "i.pixiv.cat"
     proxy_uri = None
-    source_url = rewrite_pximg_to_pixiv_cat(str(image.original_url)) if use_pixiv_cat else str(image.original_url)
+    source_url = rewrite_pximg_to_mirror(str(image.original_url), mirror_host=mirror_host) if use_pixiv_cat else str(image.original_url)
     if not use_pixiv_cat:
         picked = await select_proxy_uri_for_url(
             engine,
