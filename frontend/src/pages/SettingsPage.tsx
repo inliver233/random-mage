@@ -35,6 +35,7 @@ type SettingsFormValues = {
   proxy_route_mode: "pixiv_only" | "all" | "allowlist" | "off";
   proxy_allowlist_domains: string[];
   proxy_default_pool_id: number;
+  image_proxy_use_pixiv_cat: boolean;
   random_default_attempts: number;
   random_default_r18_strict: boolean;
   random_fail_cooldown_ms: number;
@@ -120,6 +121,7 @@ export function SettingsPage() {
     if (!query.data) return;
     const settings = asObject(query.data.settings);
     const proxy = asObject(settings.proxy);
+    const imageProxy = asObject(settings.image_proxy);
     const random = asObject(settings.random);
     const security = asObject(settings.security);
     const rateLimit = asObject(settings.rate_limit);
@@ -134,6 +136,7 @@ export function SettingsPage() {
       proxy_route_mode: routeMode,
       proxy_allowlist_domains: asStrList(proxy.allowlist_domains),
       proxy_default_pool_id: asInt(proxy.default_pool_id, 0),
+      image_proxy_use_pixiv_cat: asBool(imageProxy.use_pixiv_cat, false),
       random_default_attempts: asInt(random.default_attempts, 3),
       random_default_r18_strict: asBool(random.default_r18_strict, true),
       random_fail_cooldown_ms: asInt(random.fail_cooldown_ms, 600_000),
@@ -157,6 +160,9 @@ export function SettingsPage() {
               route_mode: values.proxy_route_mode,
               allowlist_domains: values.proxy_allowlist_domains,
               default_pool_id: values.proxy_default_pool_id > 0 ? values.proxy_default_pool_id : "",
+            },
+            image_proxy: {
+              use_pixiv_cat: values.image_proxy_use_pixiv_cat,
             },
             random: {
               default_attempts: values.random_default_attempts,
@@ -268,6 +274,18 @@ export function SettingsPage() {
                     .map((p) => ({ value: Number(p.id), label: `${p.name}(#${p.id})` })),
                 ]}
               />
+            </Form.Item>
+
+            <Typography.Title level={5} style={{ marginTop: 12 }}>
+              图片加速
+            </Typography.Title>
+            <Form.Item
+              label="使用 Pixiv.cat 反向代理（仅图片上游）"
+              name="image_proxy_use_pixiv_cat"
+              valuePropName="checked"
+              extra="开启后：服务端拉取图片时会把 i.pximg.net 替换为 i.pixiv.cat（客户端仍访问本站域名，不会暴露第三方域名）。"
+            >
+              <Switch />
             </Form.Item>
 
             <Typography.Title level={5} style={{ marginTop: 12 }}>

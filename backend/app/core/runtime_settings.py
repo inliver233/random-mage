@@ -54,6 +54,7 @@ class RuntimeConfig:
     proxy_allowlist_domains: list[str]
     proxy_route_pools: dict[str, int]
     proxy_default_pool_id: int | None
+    image_proxy_use_pixiv_cat: bool
     random_defaults: dict[str, Any]
     hide_origin_url_in_public_json: bool
     rate_limit: dict[str, Any]
@@ -67,6 +68,7 @@ class RuntimeConfig:
             proxy_allowlist_domains=[],
             proxy_route_pools={},
             proxy_default_pool_id=None,
+            image_proxy_use_pixiv_cat=False,
             random_defaults={},
             hide_origin_url_in_public_json=True,
             rate_limit={},
@@ -129,6 +131,9 @@ def runtime_config_from_values(values: dict[str, Any]) -> RuntimeConfig:
             candidate = 0
         proxy_default_pool_id = candidate if candidate > 0 else None
 
+    image_proxy_use_pixiv_cat_raw = values.get("image_proxy.use_pixiv_cat")
+    image_proxy_use_pixiv_cat = _as_bool(image_proxy_use_pixiv_cat_raw)
+
     random_defaults_raw = values.get("random.defaults")
     random_defaults = defaults.random_defaults
     if isinstance(random_defaults_raw, dict):
@@ -149,6 +154,9 @@ def runtime_config_from_values(values: dict[str, Any]) -> RuntimeConfig:
         proxy_allowlist_domains=proxy_allowlist_domains,
         proxy_route_pools=proxy_route_pools,
         proxy_default_pool_id=proxy_default_pool_id,
+        image_proxy_use_pixiv_cat=image_proxy_use_pixiv_cat
+        if image_proxy_use_pixiv_cat is not None
+        else defaults.image_proxy_use_pixiv_cat,
         random_defaults=random_defaults,
         hide_origin_url_in_public_json=hide_origin_url
         if hide_origin_url is not None
