@@ -45,6 +45,14 @@ def test_parse_pixiv_original_url_ok_ugoira0() -> None:
     assert parsed.ext == "jpg"
 
 
+def test_parse_pixiv_original_url_ok_ugoira_zip() -> None:
+    u = "https://i.pximg.net/img-zip-ugoira/img/2023/01/01/00/00/00/12345678_ugoira600x600.zip"
+    parsed = parse_pixiv_original_url(u)
+    assert parsed.illust_id == 12345678
+    assert parsed.page_index == 0
+    assert parsed.ext == "zip"
+
+
 def test_parse_pixiv_original_url_ignores_query_and_whitespace() -> None:
     u = "  https://i.pximg.net/img-original/img/2023/01/01/00/00/00/12345678_p12.PNG?foo=bar  \n"
     parsed = parse_pixiv_original_url(u)
