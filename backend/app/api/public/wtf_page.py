@@ -167,6 +167,11 @@ def _build_wtf_html(*, base_url: str) -> str:
       );
       background-size: 200% 100%;
       animation: shimmer 1100ms ease-in-out infinite;
+      border-color: rgba(58, 38, 26, 0.10);
+      box-shadow: none;
+    }}
+    .item.pending img {{
+      aspect-ratio: var(--ar, 16 / 9);
     }}
     .item img {{
       width: 100%;
@@ -254,6 +259,19 @@ def _build_wtf_html(*, base_url: str) -> str:
       }};
     }}
 
+    function pickSkeletonRatio() {{
+      const o = String(baseParams.get("orientation") || "").trim().toLowerCase();
+      if (o === "square") return "1 / 1";
+      if (o === "portrait") return "2 / 3";
+      if (o === "landscape") return "16 / 9";
+
+      const adaptiveRaw = String(baseParams.get("adaptive") || "").trim().toLowerCase();
+      const adaptiveOn = baseParams.has("adaptive") && adaptiveRaw !== "0" && adaptiveRaw !== "false";
+      if (adaptiveOn) return isMobile() ? "2 / 3" : "16 / 9";
+
+      return isMobile() ? "3 / 4" : "16 / 9";
+    }}
+
     function buildUrl() {{
       const p = new URLSearchParams(baseParams);
       p.set("t", String(Date.now()) + "_" + String(seq++));
@@ -284,6 +302,7 @@ def _build_wtf_html(*, base_url: str) -> str:
 
       const item = document.createElement("div");
       item.className = "item pending";
+      item.style.setProperty("--ar", pickSkeletonRatio());
 
       const img = new Image();
       img.decoding = "async";
