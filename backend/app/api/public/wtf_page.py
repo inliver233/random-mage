@@ -255,13 +255,21 @@ def _build_wtf_html(*, base_url: str) -> str:
     }}
     body.view-masonry .feed {{
       margin-top: 14px;
-      display: block;
-      column-width: 340px;
-      column-gap: 0;
+      display: flex;
+      flex-direction: row;
       gap: 0;
+      align-items: flex-start;
+      width: 100%;
+    }}
+    body.view-masonry .mcol {{
+      flex: 1 1 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      line-height: 0;
+      min-width: 0;
     }}
     body.view-masonry .item {{
-      display: inline-block;
       width: 100%;
       break-inside: avoid;
       border: none;
@@ -277,17 +285,34 @@ def _build_wtf_html(*, base_url: str) -> str:
     }}
     body.view-masonry .item img {{
       border-radius: 0;
+      transition: opacity 180ms ease;
+      transform: none;
+    }}
+    body.view-masonry .item.loaded img {{
+      transform: none;
     }}
 
     body.view-tiles .feed {{
       margin-top: 14px;
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-      gap: 12px;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 16px;
+    }}
+    @media (max-width: 1100px) {{
+      body.view-tiles .feed {{
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+      }}
+    }}
+    @media (max-width: 760px) {{
+      body.view-tiles .feed {{
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }}
     }}
     @media (max-width: 520px) {{
       body.view-tiles .feed {{
-        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 10px;
       }}
     }}
@@ -296,6 +321,15 @@ def _build_wtf_html(*, base_url: str) -> str:
       background: var(--card);
       border: 1px solid var(--border);
       box-shadow: 0 10px 30px rgba(40, 24, 16, 0.06);
+      transition: transform 120ms ease, box-shadow 180ms ease, border-color 180ms ease;
+    }}
+    body.view-tiles .item:hover {{
+      transform: translateY(-1px);
+      border-color: rgba(162, 82, 44, 0.30);
+      box-shadow: 0 14px 36px rgba(40, 24, 16, 0.10);
+    }}
+    body.view-tiles .item:focus-within {{
+      border-color: rgba(162, 82, 44, 0.42);
     }}
     body.view-tiles .item img {{
       aspect-ratio: var(--tile-ar, 16 / 9);
@@ -307,6 +341,18 @@ def _build_wtf_html(*, base_url: str) -> str:
     }}
     body.view-tiles .meta {{
       display: flex;
+    }}
+    body.view-tiles .meta a {{
+      padding: 2px 6px;
+      border-radius: 8px;
+    }}
+    body.view-tiles .meta a:hover {{
+      background: rgba(192, 112, 70, 0.14);
+      text-decoration: none;
+    }}
+    body.view-tiles .meta a:focus-visible {{
+      outline: 2px solid rgba(162, 82, 44, 0.55);
+      outline-offset: 2px;
     }}
   </style>
 </head>
@@ -348,11 +394,118 @@ def _build_wtf_html(*, base_url: str) -> str:
     const qs = new URLSearchParams(window.location.search);
     const VIEW_KEY = "wtf_view";
 
+    const allItems = [];
+    let masonryCols = [];
+    let masonryHeights = [];
+    let masonryCount = 0;
+
     function normalizeView(raw) {{
       const v = String(raw || "").trim().toLowerCase();
       if (v === "masonry" || v === "mason" || v === "standard") return "masonry";
       if (v === "tiles" || v === "tile" || v === "grid" || v === "small") return "tiles";
       return "single";
+    }}
+
+    function ratioToNumber(r) {{
+      const s = String(r || "").replace(/\\s+/g, "");
+      const m = s.match(/^(\\d+(?:\\.\\d+)?)\\/(\\d+(?:\\.\\d+)?)$/);
+      if (!m) return 0.75;
+      const w = Number(m[1]);
+      const h = Number(m[2]);
+      if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return 0.75;
+      return h / w;
+    }}
+
+    function desiredMasonryCount() {{
+      const w = Math.max(0, document.documentElement.clientWidth || window.innerWidth || 0);
+      if (w <= 520) return 1;
+      if (w <= 980) return 2;
+      return 3;
+    }}
+
+    function masonryColWidth() {{
+      const w = Math.max(320, feed.clientWidth || document.documentElement.clientWidth || window.innerWidth || 1000);
+      return masonryCount > 0 ? (w / masonryCount) : w;
+    }}
+
+    function masonryEstimateHeight(item) {{
+      const ratio = Number(item && item.dataset ? item.dataset.ratio : NaN);
+      const r = Number.isFinite(ratio) && ratio > 0 ? ratio : 0.75;
+      return masonryColWidth() * r;
+    }}
+
+    function rebuildLayout() {{
+      try {{ feed.textContent = ""; }} catch (e) {{}}
+      masonryCols = [];
+      masonryHeights = [];
+      masonryCount = 0;
+
+      if (viewMode === "masonry") {{
+        masonryCount = desiredMasonryCount();
+        masonryHeights = new Array(masonryCount).fill(0);
+        for (let i = 0; i < masonryCount; i++) {{
+          const col = document.createElement("div");
+          col.className = "mcol";
+          masonryCols.push(col);
+          feed.appendChild(col);
+        }}
+
+        for (const item of allItems) {{
+          const h = masonryEstimateHeight(item);
+          let best = 0;
+          for (let i = 1; i < masonryHeights.length; i++) {{
+            if (masonryHeights[i] < masonryHeights[best]) best = i;
+          }}
+          item.dataset.mcol = String(best);
+          item.dataset.estH = String(h);
+          masonryHeights[best] += h;
+          masonryCols[best].appendChild(item);
+        }}
+        return;
+      }}
+
+      for (const item of allItems) {{
+        try {{
+          delete item.dataset.mcol;
+          delete item.dataset.estH;
+        }} catch (e) {{}}
+        feed.appendChild(item);
+      }}
+    }}
+
+    function mountNewItem(item) {{
+      allItems.push(item);
+      if (viewMode !== "masonry") {{
+        feed.appendChild(item);
+        return;
+      }}
+
+      if (!masonryCols.length || masonryCount !== desiredMasonryCount()) {{
+        rebuildLayout();
+        return;
+      }}
+
+      const h = masonryEstimateHeight(item);
+      let best = 0;
+      for (let i = 1; i < masonryHeights.length; i++) {{
+        if (masonryHeights[i] < masonryHeights[best]) best = i;
+      }}
+      item.dataset.mcol = String(best);
+      item.dataset.estH = String(h);
+      masonryHeights[best] += h;
+      masonryCols[best].appendChild(item);
+    }}
+
+    function updateMasonryEstimate(item) {{
+      if (viewMode !== "masonry") return;
+      if (!item || !item.dataset) return;
+      const idx = Number(item.dataset.mcol);
+      if (!Number.isInteger(idx) || idx < 0 || idx >= masonryHeights.length) return;
+      const oldH = Number(item.dataset.estH);
+      const prev = Number.isFinite(oldH) && oldH > 0 ? oldH : 0;
+      const next = masonryEstimateHeight(item);
+      masonryHeights[idx] = Math.max(0, masonryHeights[idx] - prev + next);
+      item.dataset.estH = String(next);
     }}
 
     let storedView = "";
@@ -405,13 +558,13 @@ def _build_wtf_html(*, base_url: str) -> str:
       let maxInflight = mobile ? 12 : 22;
 
       if (viewMode === "masonry") {{
-        initial = mobile ? 18 : 30;
-        step = mobile ? 12 : 20;
-        maxInflight = mobile ? 18 : 30;
+        initial = mobile ? 14 : 24;
+        step = mobile ? 10 : 16;
+        maxInflight = mobile ? 14 : 22;
       }} else if (viewMode === "tiles") {{
-        initial = mobile ? 20 : 34;
-        step = mobile ? 14 : 24;
-        maxInflight = mobile ? 20 : 34;
+        initial = mobile ? 16 : 24;
+        step = mobile ? 10 : 14;
+        maxInflight = mobile ? 16 : 20;
       }}
 
       if (slow) {{
@@ -442,6 +595,8 @@ def _build_wtf_html(*, base_url: str) -> str:
       if (persist) {{
         try {{ localStorage.setItem(VIEW_KEY, viewMode); }} catch (e) {{}}
       }}
+
+      rebuildLayout();
 
       const c = cfg();
       target = Math.max(target, c.initial);
@@ -548,7 +703,9 @@ def _build_wtf_html(*, base_url: str) -> str:
 
       const item = document.createElement("div");
       item.className = "item pending";
-      item.style.setProperty("--ar", pickRatioFromParams());
+      const fallbackAr = pickRatioFromParams();
+      item.style.setProperty("--ar", fallbackAr);
+      item.dataset.ratio = String(ratioToNumber(fallbackAr));
 
       const img = document.createElement("img");
       img.decoding = "async";
@@ -561,7 +718,7 @@ def _build_wtf_html(*, base_url: str) -> str:
 
       item.appendChild(img);
       item.appendChild(meta);
-      feed.appendChild(item);
+      mountNewItem(item);
 
       let tries = 0;
       let done = false;
@@ -583,6 +740,17 @@ def _build_wtf_html(*, base_url: str) -> str:
         done = true;
         inflight = Math.max(0, inflight - 1);
         failStreak += 1;
+        try {{
+          const idx = allItems.indexOf(item);
+          if (idx >= 0) allItems.splice(idx, 1);
+        }} catch (e) {{}}
+        try {{
+          const colIdx = Number(item.dataset.mcol);
+          const est = Number(item.dataset.estH);
+          if (Number.isInteger(colIdx) && colIdx >= 0 && colIdx < masonryHeights.length && Number.isFinite(est) && est > 0) {{
+            masonryHeights[colIdx] = Math.max(0, masonryHeights[colIdx] - est);
+          }}
+        }} catch (e) {{}}
         try {{ item.remove(); }} catch (e) {{}}
         updateSentinel();
         if (String(reason || "") === "NO_MATCH") {{
@@ -605,6 +773,17 @@ def _build_wtf_html(*, base_url: str) -> str:
         try {{
           const data = await fetchRandomData();
           setMeta(meta, data);
+          try {{
+            const iw = data && data.image ? Number(data.image.width) : NaN;
+            const ih = data && data.image ? Number(data.image.height) : NaN;
+            if (Number.isFinite(iw) && Number.isFinite(ih) && iw > 0 && ih > 0) {{
+              img.setAttribute("width", String(iw));
+              img.setAttribute("height", String(ih));
+              item.style.setProperty("--ar", String(iw) + " / " + String(ih));
+              item.dataset.ratio = String(ih / iw);
+              updateMasonryEstimate(item);
+            }}
+          }} catch (e) {{}}
           const proxy = data && data.urls ? String(data.urls.proxy || "") : "";
           if (!proxy || proxy[0] !== "/") throw new Error("BAD_PROXY");
           img.src = proxy + buildProxyQuery();
@@ -625,6 +804,15 @@ def _build_wtf_html(*, base_url: str) -> str:
       }};
 
       img.onload = () => {{
+        try {{
+          if ((!img.hasAttribute("width") || !img.hasAttribute("height")) && img.naturalWidth > 0 && img.naturalHeight > 0) {{
+            img.setAttribute("width", String(img.naturalWidth));
+            img.setAttribute("height", String(img.naturalHeight));
+            item.style.setProperty("--ar", String(img.naturalWidth) + " / " + String(img.naturalHeight));
+            item.dataset.ratio = String(img.naturalHeight / img.naturalWidth);
+            updateMasonryEstimate(item);
+          }}
+        }} catch (e) {{}}
         finishOk();
       }};
       img.onerror = () => {{
@@ -694,6 +882,9 @@ def _build_wtf_html(*, base_url: str) -> str:
     window.addEventListener("resize", () => {{
       const c = cfg();
       target = Math.max(target, c.initial);
+      if (viewMode === "masonry" && masonryCount !== desiredMasonryCount()) {{
+        rebuildLayout();
+      }}
       ensure();
     }});
   </script>
