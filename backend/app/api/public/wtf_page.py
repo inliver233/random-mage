@@ -620,10 +620,15 @@ def _build_wtf_html(*, base_url: str) -> str:
 
     function buildProxyQuery() {{
       const qp = new URLSearchParams();
-      const pc = String(baseParams.get("pixiv_cat") || "").trim();
-      if (pc === "1") qp.set("pixiv_cat", "1");
-      const mh = String(baseParams.get("pximg_mirror_host") || "").trim();
-      if (mh) qp.set("pximg_mirror_host", mh);
+      const pr = String(baseParams.get("proxy") || "").trim();
+      if (pr) {{
+        qp.set("proxy", pr);
+      }} else {{
+        const pc = String(baseParams.get("pixiv_cat") || "").trim();
+        if (pc === "1") qp.set("pixiv_cat", "1");
+        const mh = String(baseParams.get("pximg_mirror_host") || "").trim();
+        if (mh) qp.set("pximg_mirror_host", mh);
+      }}
       const s = qp.toString();
       return s ? ("?" + s) : "";
     }}

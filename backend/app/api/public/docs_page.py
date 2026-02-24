@@ -19,6 +19,7 @@ def _build_docs_html(*, base_url: str) -> str:
 
     examples = {
         "img_default": u("/random"),
+        "img_proxy_cat": u("/random?proxy=i-pixiv-cat"),
         "img_pixiv_cat": u("/random?pixiv_cat=1"),
         "img_pixiv_re": u("/random?pixiv_cat=1&pximg_mirror_host=re"),
         "img_redirect": u("/random?redirect=1"),
@@ -333,6 +334,15 @@ def _build_docs_html(*, base_url: str) -> str:
             </td>
           </tr>
           <tr>
+            <td><code>proxy</code></td>
+            <td>
+              指定本次请求的图片上游镜像（优先级最高）。会隐式开启第三方镜像（等价于 <code>pixiv_cat=1</code>），并覆盖地区自动选择。<br/>
+              内置值：<code>cat</code>/<code>re</code>/<code>nl</code>，也支持 <code>pixiv-cat</code>/<code>i-pixiv-cat</code> 等写法。<br/>
+              自定义镜像：可填写你自建镜像域名（需在管理端“自定义镜像白名单”允许）。<br/>
+              示例：<a href="{examples["img_proxy_cat"]}">{examples["img_proxy_cat"]}</a>
+            </td>
+          </tr>
+          <tr>
             <td><code>pixiv_cat</code></td>
             <td>
               <code>0</code>/<code>1</code>：强制使用第三方反向代理拉取图片上游（即使全局未开启）。<br/>
@@ -416,6 +426,15 @@ def _build_docs_html(*, base_url: str) -> str:
       <h2>复杂示例（组合查询）</h2>
       <p>示例：R18 + 插画 + 竖图 + 250万像素以上 + 收藏≥2 + 评论≥5 + 标签包含 loli（直接出图）。</p>
       <pre><code>{examples["complex"]}</code></pre>
+    </section>
+
+    <section class="card" style="margin-top: 14px;">
+      <h2>6) 管理端导入（可选）</h2>
+      <p class="muted">管理端支持从文件批量导入图片链接：.txt（每行一个 URL）或 PixivBatchDownloader 导出的 .json。</p>
+      <ul>
+        <li><strong>.json</strong> 导入会自动提取图片链接，并尽可能填充已有元数据/标签；不依赖 refresh token 也能使用（无需额外触发补全）。</li>
+        <li><strong>.txt</strong> 导入仅包含 URL，推荐在有 refresh token 时启用导入后补全，以获得更完整的标签/尺寸/R18/AI 等信息。</li>
+      </ul>
     </section>
   </div>
 </body>
