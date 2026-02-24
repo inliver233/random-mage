@@ -20,3 +20,6 @@ deploy/.env
 _tmp_easy_export.txt
 _tmp_*.md
 _tmp_*.txt
+
+# Local reference repo (do not commit)
+PixivBatchDownloader/
