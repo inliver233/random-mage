@@ -304,7 +304,8 @@ def _build_docs_html(*, base_url: str) -> str:
       <p><span class="kbd">/status</span> 为公开仪表盘：展示 API 状态、图库概览、/random 请求统计；<span class="kbd">/status.json</span> 为机器可读 JSON。</p>
       <pre><code>{examples["status"]}
 {examples["status_json"]}</code></pre>
-      <p><span class="kbd">/wtf</span> 为瀑布流：参数与 <span class="kbd">/random</span> 完全一致（例如 r18/标签/分辨率/热度等），页面内部会自动加上 <span class="kbd">adaptive=1</span> 与 <span class="kbd">redirect=1</span> 来做屏幕适配与稳定链接。</p>
+      <p><span class="kbd">/wtf</span> 为瀑布流：支持 <span class="kbd">/random</span> 的全部过滤参数（例如 r18/标签/分辨率/热度/排除标签等），默认会补上 <span class="kbd">adaptive=1</span> 以更适合不同屏幕。</p>
+      <p class="muted">/wtf 额外支持布局参数：<code>view=single|masonry|tiles</code>，以及 <code>wtf_mcols</code>/<code>wtf_mgap</code>/<code>wtf_tcols</code>/<code>wtf_tgap</code>/<code>wtf_tratio</code>（仅影响页面布局）。另有 <code>wtf_gender=girls|boys</code> 与概要标签 <code>@male</code>/<code>@female</code>（仅 /wtf 端展开，用于快速“只看女生/只看男生”）。</p>
       <pre><code>{examples["wtf"]}
 {examples["wtf_r18"]}</code></pre>
     </section>
