@@ -38,6 +38,24 @@ JSON（用于调试/信息展示）：
 /random?included_tags=girl|boy&included_tags=white|black
 ```
 
+## 推荐策略 URL 覆盖（rec_*）
+
+`/random?strategy=quality` 的推荐默认使用管理端配置，但你也可以在单次请求里用 `rec_*` 覆盖（不会保存、无需登录）：
+
+```text
+/random?strategy=quality&rec_pick_mode=weighted&rec_temperature=1&rec_w_freshness=2&rec_fresh_half_life_days=14
+```
+
+常用参数：
+
+- `rec_pick_mode=best|weighted`
+- `rec_temperature=...`
+- `rec_w_<key>` 覆盖 score_weights（如 `rec_w_bookmark` / `rec_w_freshness` / `rec_w_bookmark_velocity`）
+- `rec_m_<key>` 覆盖 multipliers（如 `rec_m_ai` / `rec_m_manga`）
+- `rec_fresh_half_life_days`、`rec_velocity_smooth_days`
+
+说明：带 `seed` 时，为保证可复现，会自动关闭时间相关项（freshness / bookmark_velocity）。
+
 ## 图片上游镜像（第三方/自建反代）
 
 服务端拉取原图时，可把 `i.pximg.net` 替换为第三方/自建镜像域名（客户端仍访问本站 `/i/...`，不会跳到第三方域名）。
@@ -70,6 +88,10 @@ JSON（用于调试/信息展示）：
 /random?proxy=i.mirror.example.com
 ```
 
+## 全局防重复（dedup）
+
+管理端「推荐策略」可开启/配置全局防重复：图片在窗口期内尽量不重复返回（进程内 best-effort；严格模式可禁止回退重复）。
+
 ## 管理端导入
 
 在管理端「导入 URL」支持两种文件：
@@ -80,4 +102,3 @@ JSON（用于调试/信息展示）：
 ## 部署
 
 参考 `deploy/docker-compose.yml` 与 `deploy/.env.example`。
-
